@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Large sample media files
+*.mp4
+*.avi
+*.mov
+*.crdownload
+
+# Environments and IDE
+.env
+.venv
+env/
+venv/
+ENV/
+.idea/
+.vscode/
+*.swp
+
+# OS generated
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/

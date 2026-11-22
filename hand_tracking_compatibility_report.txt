@@ -1,0 +1,30 @@
+===========================================================================
+  SYSTEM SPECIFICATION AUDIT REPORT  [2026-11-22 12:20:29]
+===========================================================================
+Operating System  : Windows 10 (Build 10.0.19045)
+Python Runtime    : 3.12.10 (64-bit)
+Display Resolution: 1366 x 768
+Processor (CPU)   : Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz
+Cores / Threads   : 2 Physical Cores / 4 Threads
+Instruction Sets  : SSE: YES, SSE2: YES, SSE3: YES, SSSE3: YES, SSE4.1: YES, SSE4.2: YES, AVX: YES, AVX2: YES, AVX512: NO
+Total System RAM  : 7.91 GB (Available: 2.73 GB, 65% used)
+Graphics (GPU)    : Intel(R) HD Graphics 5500, NVIDIA GeForce 920M
+Webcam Status     : READY (Native capture size: 640x480)
+
+===========================================================================
+  COMPATIBILITY VERDICT: EXCELLENT (Runs Full High-Speed Mode)
+  HARDWARE READINESS SCORE: 10 / 10
+===========================================================================
+
+[*] RECOMMENDED CONFIGURATION PROFILE:
+  1. RAM Headroom: 7.91 GB total (2.73 GB free) is optimal.
+  2. Dual-core CPU detected: Run single-hand tracking (num_hands=1) for air_controller.
+  3. Run at 640x480 with MediaPipe Lite (model_complexity=0).
+
+[+] SUMMARY PROFILE CONFIGURATION:
+  * MediaPipe Version : Standard ('pip install mediapipe')
+  * Video Stream Res  : 640 x 480 @ 30 FPS
+  * Inference Model   : Lite (model_complexity=0)
+  * Air Controller    : Full Win32 Direct Cursor + Pinch Click
+  * Air Harp Audio    : 44.1 kHz Karplus-Strong Plucked Strings
+===========================================================================

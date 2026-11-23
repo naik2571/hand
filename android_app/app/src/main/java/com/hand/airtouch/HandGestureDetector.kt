@@ -31,10 +31,18 @@ class HandGestureDetector(
     private var smoothY: Float = screenHeight / 2f
 
     private var lastGestureTime = 0L
-    private var lastScrollY = 0f
     private var isScrolling = false
     private var lastWristX: Float? = null
     private var lastWristTime = 0L
+
+    // Two-finger scroll anti-rebound engine
+    private var lastTwoFingerY: Float? = null
+    private var lastTwoFingerTime: Long = 0L
+    private var strokeStartY: Float = 0f
+    private var strokeStartTime: Long = 0L
+    private var lastScrollDirection: String? = null // "UP" or "DOWN"
+    private var lastScrollActionTime: Long = 0L
+    private var isScrollArmed: Boolean = true
 
     // Anti-shake anchor for air tap
     private var clickAnchorPos: Pair<Float, Float>? = null
@@ -99,6 +107,8 @@ class HandGestureDetector(
             clickAnchorPos = null
             isScrolling = false
             isDippingOrPinching = false
+            lastTwoFingerY = null
+            lastScrollDirection = null
             return null
         }
 
@@ -153,33 +163,83 @@ class HandGestureDetector(
         lastWristTime = now
 
         // -------------------------------------------------------------
-        // 4. Two-Finger Reels / Shorts Vertical Swipe
+        // 4. Two-Finger Reels / Shorts Vertical Swipe (Dual-Layer Anti-Rebound)
         // -------------------------------------------------------------
         if (isTwoFinger) {
             lastDetectedState = "TWO FINGERS (SCROLL MODE)"
             isDippingOrPinching = false
             val currY = (indexTip.y() + middleTip.y()) / 2f
+
             if (!isScrolling) {
                 isScrolling = true
-                lastScrollY = currY
+                strokeStartY = currY
+                strokeStartTime = now
+                lastTwoFingerY = currY
+                lastTwoFingerTime = now
+                isScrollArmed = true
             } else {
-                val dy = currY - lastScrollY
-                if (Math.abs(dy) > 0.08f && (now - lastGestureTime > 450)) {
-                    val cx = screenWidth / 2f
-                    lastScrollY = currY
-                    lastGestureTime = now
-                    return if (dy < 0) {
-                        lastDetectedState = "ACTION: NEXT REEL [SWIPE UP]"
-                        GestureAction.Swipe(cx, screenHeight * 0.75f, cx, screenHeight * 0.25f, 240)
-                    } else {
-                        lastDetectedState = "ACTION: PREV REEL [SWIPE DOWN]"
-                        GestureAction.Swipe(cx, screenHeight * 0.25f, cx, screenHeight * 0.75f, 240)
+                val dt = (now - lastTwoFingerTime) / 1000f
+                if (dt > 0.008f) {
+                    val prevY = lastTwoFingerY ?: currY
+                    val vy = (currY - prevY) / dt // Normalized velocity (units / sec)
+                    val totalDy = currY - strokeStartY
+                    val strokeDuration = now - strokeStartTime
+
+                    // Re-arm when hand settles or slows down
+                    if (!isScrollArmed && Math.abs(vy) < 0.4f) {
+                        isScrollArmed = true
+                        strokeStartY = currY
+                        strokeStartTime = now
                     }
+
+                    if (isScrollArmed) {
+                        // Intentional UP flick: fast upward speed (vy < -1.0) and sufficient travel (totalDy < -0.06)
+                        if (vy < -1.0f && totalDy < -0.06f) {
+                            val isReverseLocked = (lastScrollDirection == "DOWN") && (now - lastScrollActionTime < 1200L)
+                            if (!isReverseLocked && (now - lastGestureTime > 350L)) {
+                                val cx = screenWidth / 2f
+                                lastGestureTime = now
+                                lastScrollActionTime = now
+                                lastScrollDirection = "UP"
+                                isScrollArmed = false
+                                lastTwoFingerY = currY
+                                lastTwoFingerTime = now
+                                lastDetectedState = "ACTION: NEXT REEL [SWIPE UP]"
+                                return GestureAction.Swipe(cx, screenHeight * 0.75f, cx, screenHeight * 0.25f, 220)
+                            }
+                        }
+                        // Intentional DOWN flick: fast downward speed (vy > 1.0) and sufficient travel (totalDy > 0.06)
+                        else if (vy > 1.0f && totalDy > 0.06f) {
+                            val isReverseLocked = (lastScrollDirection == "UP") && (now - lastScrollActionTime < 1200L)
+                            if (!isReverseLocked && (now - lastGestureTime > 350L)) {
+                                val cx = screenWidth / 2f
+                                lastGestureTime = now
+                                lastScrollActionTime = now
+                                lastScrollDirection = "DOWN"
+                                isScrollArmed = false
+                                lastTwoFingerY = currY
+                                lastTwoFingerTime = now
+                                lastDetectedState = "ACTION: PREV REEL [SWIPE DOWN]"
+                                return GestureAction.Swipe(cx, screenHeight * 0.25f, cx, screenHeight * 0.75f, 220)
+                            }
+                        }
+                    }
+
+                    // Reset anchor if stroke has expired (> 350ms) or reversed slowly without firing
+                    if (strokeDuration > 350 || (totalDy > 0 && vy < -0.4f) || (totalDy < 0 && vy > 0.4f)) {
+                        strokeStartY = currY
+                        strokeStartTime = now
+                    }
+
+                    lastTwoFingerY = currY
+                    lastTwoFingerTime = now
                 }
             }
             return null
         } else {
             isScrolling = false
+            lastTwoFingerY = null
+            isScrollArmed = true
         }
 
         // -------------------------------------------------------------

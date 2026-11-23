@@ -154,6 +154,15 @@ class AirController:
         self.adb_thread = threading.Thread(target=self._adb_worker, daemon=True)
         self.adb_thread.start()
 
+        # Anti-Rebound Engine for Android Two-Finger Scrolling
+        self.last_two_finger_y = None
+        self.last_two_finger_time = 0.0
+        self.stroke_start_y = 0.0
+        self.stroke_start_time = 0.0
+        self.last_scroll_direction = None  # "UP" or "DOWN"
+        self.last_scroll_action_time = 0.0
+        self.is_scroll_armed = True
+
         # Air Swing (Horizontal Tab Navigation)
         self.last_wrist_x = None
         self.last_wrist_time = 0.0
@@ -181,6 +190,9 @@ class AirController:
                     elif cmd_type == "keyevent":
                         code = args[0]
                         self.adb_device.shell(f"input keyevent {code}")
+                    elif cmd_type == "shell":
+                        cmd = args[0]
+                        self.adb_device.shell(cmd)
             except Exception as e:
                 print(f"[AirController/ADB] Warning: {e}")
                 self.adb_device = None
@@ -402,6 +414,18 @@ class AirController:
                 self.refresh_android_device()
                 self.last_adb_gesture_time = now
 
+            # Feature: Air Clutch (Closed Fist - Pause Pointer & Reset Gesture Locks)
+            if is_fist:
+                self.hud_status = "ANDROID: AIR CLUTCH (POINTER FROZEN)"
+                self.tap_state = "IDLE"
+                self.click_anchor_pos = None
+                self.is_scrolling = False
+                self.last_two_finger_y = None
+                self.last_scroll_direction = None
+                self.is_scroll_armed = True
+                self._render_hud(frame, coords=(filtered_x, filtered_y))
+                return frame
+
             # Feature: Air Swing (Horizontal Flick Left / Right for Tabs/Screens)
             if self.last_wrist_x is not None:
                 dt_wrist = now - self.last_wrist_time
@@ -424,41 +448,88 @@ class AirController:
             self.last_wrist_x = wrist.x
             self.last_wrist_time = now
 
-            # Feature: Open Palm Upward/Leftward Navigation Buttons
+            # Feature: Open Palm 4-Way Global Navigation (Back, Recents, Home, Notifications)
             is_open_palm = index_extended and middle_extended and ring_extended and pinky_extended
             if is_open_palm and (now - self.last_adb_gesture_time > 0.80):
                 if index_tip.x < 0.22:
                     self.adb_queue.put(("keyevent", [4]))  # Android Back
                     self.hud_status = "ANDROID: BACK BUTTON"
                     self.last_adb_gesture_time = now
+                elif index_tip.x > 0.78:
+                    self.adb_queue.put(("keyevent", [187]))  # Android Recent Apps / Overview
+                    self.hud_status = "ANDROID: RECENT APPS"
+                    self.last_adb_gesture_time = now
                 elif index_tip.y < 0.20:
                     self.adb_queue.put(("keyevent", [3]))  # Android Home
                     self.hud_status = "ANDROID: HOME SCREEN"
                     self.last_adb_gesture_time = now
+                elif index_tip.y > 0.78:
+                    self.adb_queue.put(("shell", ["cmd statusbar expand-notifications"]))  # Android Notification Shade
+                    self.hud_status = "ANDROID: NOTIFICATIONS"
+                    self.last_adb_gesture_time = now
 
-            # Feature: Two-Finger Reels / Shorts Vertical Swipe
+            # Feature: Two-Finger Reels / Shorts Vertical Swipe (Dual-Layer Anti-Rebound)
             elif index_extended and middle_extended and not ring_extended and not pinky_extended and not is_left_click:
                 curr_y = (index_tip.y + middle_tip.y) / 2.0
                 if not self.is_scrolling:
                     self.is_scrolling = True
-                    self.last_scroll_y = curr_y
-                    self.last_scroll_time = now
+                    self.stroke_start_y = curr_y
+                    self.stroke_start_time = now
+                    self.last_two_finger_y = curr_y
+                    self.last_two_finger_time = now
+                    self.is_scroll_armed = True
                 else:
-                    dy = curr_y - self.last_scroll_y
-                    if abs(dy) > 0.12 and (now - self.last_adb_gesture_time > 0.50):
-                        cx = self.phone_w // 2
-                        if dy < 0:
-                            # Hand moved UP -> Next Reel
-                            self.adb_queue.put(("swipe", [cx, int(self.phone_h * 0.75), cx, int(self.phone_h * 0.25), 200]))
-                            self.hud_status = "ANDROID: NEXT REEL [SWIPE UP]"
-                        else:
-                            # Hand moved DOWN -> Previous Reel
-                            self.adb_queue.put(("swipe", [cx, int(self.phone_h * 0.25), cx, int(self.phone_h * 0.75), 200]))
-                            self.hud_status = "ANDROID: PREV REEL [SWIPE DOWN]"
-                        self.last_scroll_y = curr_y
-                        self.last_adb_gesture_time = now
+                    dt = now - self.last_two_finger_time
+                    if dt > 0.008:
+                        prev_y = self.last_two_finger_y if self.last_two_finger_y is not None else curr_y
+                        vy = (curr_y - prev_y) / dt
+                        total_dy = curr_y - self.stroke_start_y
+                        stroke_duration = now - self.stroke_start_time
+
+                        # Re-arm when hand settles or slows down
+                        if not self.is_scroll_armed and abs(vy) < 0.4:
+                            self.is_scroll_armed = True
+                            self.stroke_start_y = curr_y
+                            self.stroke_start_time = now
+
+                        if self.is_scroll_armed:
+                            cx = self.phone_w // 2
+                            # Intentional UP flick: fast upward speed (vy < -1.0) and sufficient travel (total_dy < -0.06)
+                            if vy < -1.0 and total_dy < -0.06:
+                                is_reverse_locked = (self.last_scroll_direction == "DOWN") and (now - self.last_scroll_action_time < 1.20)
+                                if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
+                                    self.adb_queue.put(("swipe", [cx, int(self.phone_h * 0.75), cx, int(self.phone_h * 0.25), 220]))
+                                    self.hud_status = "ANDROID: NEXT REEL [SWIPE UP]"
+                                    self.last_adb_gesture_time = now
+                                    self.last_scroll_action_time = now
+                                    self.last_scroll_direction = "UP"
+                                    self.is_scroll_armed = False
+                                    self.last_two_finger_y = curr_y
+                                    self.last_two_finger_time = now
+                            # Intentional DOWN flick: fast downward speed (vy > 1.0) and sufficient travel (total_dy > 0.06)
+                            elif vy > 1.0 and total_dy > 0.06:
+                                is_reverse_locked = (self.last_scroll_direction == "UP") and (now - self.last_scroll_action_time < 1.20)
+                                if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
+                                    self.adb_queue.put(("swipe", [cx, int(self.phone_h * 0.25), cx, int(self.phone_h * 0.75), 220]))
+                                    self.hud_status = "ANDROID: PREV REEL [SWIPE DOWN]"
+                                    self.last_adb_gesture_time = now
+                                    self.last_scroll_action_time = now
+                                    self.last_scroll_direction = "DOWN"
+                                    self.is_scroll_armed = False
+                                    self.last_two_finger_y = curr_y
+                                    self.last_two_finger_time = now
+
+                        # Reset anchor if stroke has expired (> 350ms) or reversed slowly without firing
+                        if stroke_duration > 0.35 or (total_dy > 0 and vy < -0.4) or (total_dy < 0 and vy > 0.4):
+                            self.stroke_start_y = curr_y
+                            self.stroke_start_time = now
+
+                        self.last_two_finger_y = curr_y
+                        self.last_two_finger_time = now
             else:
                 self.is_scrolling = False
+                self.last_two_finger_y = None
+                self.is_scroll_armed = True
 
                 # Feature: Air-Tap (Phone Touch)
                 if is_left_click:
@@ -501,6 +572,9 @@ class AirController:
                 self.hud_status = "AIR CLUTCH (CLOSED FIST - POINTER FROZEN)"
             self.click_anchor_pos = None
             self.is_scrolling = False
+            self.last_two_finger_y = None
+            self.last_scroll_direction = None
+            self.is_scroll_armed = True
             self._render_hud(frame, coords=self.last_cursor_pos)
             return frame
 

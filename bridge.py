@@ -193,13 +193,18 @@ class VisionBridge:
         print("   -> Press 'Y' on your keyboard to SWITCH TO ANDROID")
         print("   -> Press 'N' on your keyboard to KEEP LAPTOP CONTROL")
         print("\n Steps for Android Touchless Control:")
-        print("   1. Keep phone screen unlocked and placed on a stand.")
-        print("   2. Point with index finger to align on phone screen.")
-        print("   3. Quick Pinch (Thumb + Index) = Tap on phone.")
-        print("   4. Two Fingers Upright + Swipe UP/DOWN = Next/Prev Reel or Short.")
-        print("   5. Open Palm Flick LEFT = Android Back Button.")
-        print("   6. Open Palm Flick UP = Android Home Screen.")
-        print("   7. Press 'T' anytime to toggle back to your Laptop.")
+        print("   1. Keep phone screen unlocked and connected via USB/Wi-Fi.")
+        print("   2. Point with index finger to align cursor on phone screen.")
+        print("   3. Quick Pinch (Thumb+Index) OR Index Dip = Tap on phone screen.")
+        print("   4. Two Fingers extended + Flick UP/DOWN = Next/Prev Reel or Short (Anti-Rebound protected).")
+        print("   5. Wrist Flick LEFT/RIGHT = Switch Tabs / Stories / Photos.")
+        print("   6. Open Palm LEFT = Android Back Button.")
+        print("   7. Open Palm RIGHT = Android Recent Apps (Multitasking Overview).")
+        print("   8. Open Palm UP = Android Home Screen.")
+        print("   9. Open Palm DOWN = Android Notification Shade & Quick Settings.")
+        print("   10. Closed Fist = Air Clutch (Freeze pointer & reset locks).")
+        print("   11. Press 'T' anytime to toggle back to your Laptop.")
+        print("   12. Press 'K' to switch camera between Laptop and Phone.")
         print("=" * 70 + "\n")
 
     def _on_detection_result(self, result, output_image, timestamp_ms):
@@ -437,16 +442,16 @@ class VisionBridge:
         lines = [
             ("MODE SWITCHING & DISPLAY:", (255, 200, 0)),
             (" - Hold closed fist for 1.5s to toggle Controller <-> Air Harp", (200, 200, 200)),
-            (" - [1] Controller | [2] Air Harp | [F] Fullscreen | [M] Mirror Flip | [S] Skeleton", (200, 200, 200)),
+            (" - [1] Controller | [2] Air Harp | [F] Fullscreen | [M] Mirror Flip | [S] Skeleton | [K] Cam", (200, 200, 200)),
             ("AIR CONTROLLER (LAPTOP & ANDROID):", (255, 200, 0)),
             (" - [T] Toggle Target: Laptop Mouse <-> Android Phone (ADB)", (200, 200, 200)),
-            (" - Laptop: Point Index to Aim, Tap Index = Left Click, Double Tap = Double Click", (200, 200, 200)),
-            (" - Laptop: Two-finger Tap = Right Click, Two-finger Drag = Scroll, Fist = Rest/Clutch", (200, 200, 200)),
-            (" - Android: Open palm flick Left/Right = Switch Screens/Tabs (Air Swing)", (200, 200, 200)),
-            (" - Android: Two-finger swipe Up/Down = Reels/Shorts | Tap Index = Touch", (200, 200, 200)),
+            (" - Laptop: Point Index to Aim, Tap Index = Left Click, Thumb+Middle = Right Click", (200, 200, 200)),
+            (" - Android: Two-finger Flick UP/DOWN = Reels/Shorts (Anti-Rebound Guard)", (200, 200, 200)),
+            (" - Android: Wrist Flick Left/Right = Switch Tabs / Stories (Air Swing)", (200, 200, 200)),
+            (" - Android: Open Palm 4-Way = Left (Back) | Right (Recents) | Up (Home) | Down (Notifications)", (200, 200, 200)),
+            (" - Air Clutch: Closed Fist = Freeze pointer & pause tracking", (200, 200, 200)),
             ("VIRTUAL AIR HARP:", (255, 200, 0)),
-            (" - Pinch & drag in air to stretch glowing strings", (200, 200, 200)),
-            (" - Pluck strings with fingertip | Press 'C' to clear strings", (200, 200, 200)),
+            (" - Pinch & drag in air to stretch glowing strings | Pluck with fingertip | 'C' to clear", (200, 200, 200)),
         ]
         y_offset = cy1 + 55
         for text, col in lines:

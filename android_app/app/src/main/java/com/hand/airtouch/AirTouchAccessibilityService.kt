@@ -2,7 +2,6 @@ package com.hand.airtouch
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.graphics.Path
@@ -17,11 +16,12 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.widget.ImageView
+import android.widget.TextView
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -46,6 +46,7 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
     private var handLandmarker: HandLandmarker? = null
     private val cameraExecutor = Executors.newSingleThreadExecutor()
     private var lastTimestampMs = 0L
+    private var isCameraBound = false
 
     companion object {
         var instance: AirTouchAccessibilityService? = null
@@ -98,10 +99,17 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
     }
 
     fun startBackgroundCameraTracking() {
+        if (isCameraBound) return
+        val bubblePreview = overlayView?.findViewById<PreviewView>(R.id.bubble_camera_preview) ?: return
+
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             try {
                 val cameraProvider = cameraProviderFuture.get()
+                val preview = Preview.Builder().build().also {
+                    it.setSurfaceProvider(bubblePreview.surfaceProvider)
+                }
+
                 val imageAnalysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
@@ -133,12 +141,25 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
 
                 val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
                 cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis)
+                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis)
+                isCameraBound = true
                 Log.d(TAG, "Background camera bound to AccessibilityService successfully")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start background camera: ${e.message}")
             }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    fun stopBackgroundCameraTracking() {
+        if (!isCameraBound) return
+        try {
+            val cameraProvider = ProcessCameraProvider.getInstance(this).get()
+            cameraProvider.unbindAll()
+            isCameraBound = false
+            Log.d(TAG, "Background camera unbound from AccessibilityService")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping background camera: ${e.message}")
+        }
     }
 
     private fun handleDetectionResult(result: HandLandmarkerResult) {
@@ -154,10 +175,22 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
         when (action) {
             is GestureAction.Tap -> {
                 Log.d(TAG, "Dispatching Tap at (${action.x}, ${action.y})")
-                val path = Path().apply { moveTo(action.x, action.y) }
-                val stroke = GestureDescription.StrokeDescription(path, 0, 50)
+                val path = Path().apply {
+                    moveTo(action.x, action.y)
+                    lineTo(action.x + 1f, action.y + 1f) // Required for non-empty stroke
+                }
+                val stroke = GestureDescription.StrokeDescription(path, 0, 80)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
-                dispatchGesture(gesture, null, null)
+                val ok = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        Log.d(TAG, "TAP gesture completed successfully!")
+                        flashBadge("TAP!")
+                    }
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        Log.e(TAG, "TAP gesture cancelled by system")
+                    }
+                }, null)
+                Log.d(TAG, "dispatchGesture(Tap) returned: $ok")
             }
             is GestureAction.Swipe -> {
                 Log.d(TAG, "Dispatching Swipe from (${action.x1}, ${action.y1}) to (${action.x2}, ${action.y2})")
@@ -165,18 +198,41 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
                     moveTo(action.x1, action.y1)
                     lineTo(action.x2, action.y2)
                 }
-                val stroke = GestureDescription.StrokeDescription(path, 0, action.durationMs)
+                val stroke = GestureDescription.StrokeDescription(path, 0, 320)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
-                dispatchGesture(gesture, null, null)
+                val ok = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        Log.d(TAG, "SWIPE gesture completed successfully!")
+                        flashBadge("SWIPE!")
+                    }
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        Log.e(TAG, "SWIPE gesture cancelled by system")
+                    }
+                }, null)
+                Log.d(TAG, "dispatchGesture(Swipe) returned: $ok")
             }
             is GestureAction.Back -> {
                 Log.d(TAG, "Performing Global Back")
                 performGlobalAction(GLOBAL_ACTION_BACK)
+                flashBadge("BACK")
             }
             is GestureAction.Home -> {
                 Log.d(TAG, "Performing Global Home")
                 performGlobalAction(GLOBAL_ACTION_HOME)
+                flashBadge("HOME")
             }
+        }
+    }
+
+    private fun flashBadge(text: String) {
+        overlayView?.post {
+            val badge = overlayView?.findViewById<TextView>(R.id.bubble_badge)
+            badge?.text = text
+            badge?.setBackgroundColor(0xCC00E5FF.toInt())
+            badge?.postDelayed({
+                badge.text = "AIRTOUCH"
+                badge.setBackgroundColor(0x99000000.toInt())
+            }, 600)
         }
     }
 
@@ -198,13 +254,13 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = 20
-                y = 120
+                x = 30
+                y = 150
             }
 
             overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_bubble, null)
 
-            // Make the floating bubble draggable anywhere on screen
+            // Drag floating bubble anywhere
             overlayView?.setOnTouchListener(object : View.OnTouchListener {
                 private var initialX = 0
                 private var initialY = 0
@@ -232,6 +288,7 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
             })
 
             windowManager?.addView(overlayView, params)
+            Log.d(TAG, "Floating overlay bubble added to WindowManager")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show overlay bubble: ${e.message}")
         }

@@ -41,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnCam: Button
     private lateinit var btnOverlay: Button
     private lateinit var btnAccess: Button
+    private lateinit var btnTestTarget: Button
     private lateinit var tvStatus: TextView
     private lateinit var previewView: PreviewView
 
@@ -49,6 +50,7 @@ class MainActivity : AppCompatActivity() {
     private val cameraExecutor = Executors.newSingleThreadExecutor()
     private var lastTimestampMs = 0L
     private var isCameraRunning = false
+    private var testTapCount = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,12 +59,22 @@ class MainActivity : AppCompatActivity() {
         btnCam = findViewById(R.id.btn_camera_permission)
         btnOverlay = findViewById(R.id.btn_overlay_permission)
         btnAccess = findViewById(R.id.btn_accessibility_permission)
+        btnTestTarget = findViewById(R.id.btn_test_target)
         tvStatus = findViewById(R.id.tv_status)
         previewView = findViewById(R.id.camera_preview)
 
         val metrics = DisplayMetrics()
         windowManager.defaultDisplay.getRealMetrics(metrics)
         gestureDetector = HandGestureDetector(metrics.widthPixels, metrics.heightPixels)
+
+        btnTestTarget.setOnClickListener {
+            testTapCount++
+            btnTestTarget.text = "AIR-TAP SUCCESS! (Tapped: $testTapCount)"
+            btnTestTarget.setBackgroundColor(Color.parseColor("#15803D")) // Green flash
+            btnTestTarget.postDelayed({
+                btnTestTarget.setBackgroundColor(Color.parseColor("#8B5CF6"))
+            }, 500)
+        }
 
         btnCam.setOnClickListener {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -94,11 +106,29 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updatePermissionButtons()
+
+        // Yield camera from background service to MainActivity
+        AirTouchAccessibilityService.instance?.stopBackgroundCameraTracking()
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             if (!isCameraRunning) {
                 startCamera()
             }
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (isCameraRunning) {
+            try {
+                ProcessCameraProvider.getInstance(this).get().unbindAll()
+                isCameraRunning = false
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unbinding camera on pause: ${e.message}")
+            }
+        }
+        // Handover camera to background accessibility service
+        AirTouchAccessibilityService.instance?.startBackgroundCameraTracking()
     }
 
     private fun updatePermissionButtons() {
@@ -224,15 +254,16 @@ class MainActivity : AppCompatActivity() {
                 action?.let { act ->
                     tvStatus.text = "GESTURE TRIGGERED:\n$act"
                     tvStatus.setTextColor(Color.parseColor("#FACC15")) // Yellow
-                    val isServiceActive = AirTouchAccessibilityService.instance != null
-                    if (isServiceActive) {
-                        AirTouchAccessibilityService.instance?.executeGesture(act)
+
+                    val service = AirTouchAccessibilityService.instance
+                    if (service != null) {
+                        service.executeGesture(act)
                     } else {
-                        Toast.makeText(this@MainActivity, "Gesture: $act\n(Enable Step 3 for system-wide touch)", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Gesture: $act\n(Step 3 needed to click outside)", Toast.LENGTH_SHORT).show()
                     }
                 }
             } else {
-                tvStatus.text = "No Hand Detected\nHold your hand in front of the front camera"
+                tvStatus.text = "No Hand Detected\nHold your hand in front of the camera"
                 tvStatus.setTextColor(Color.parseColor("#94A3B8")) // Slate Gray
             }
         }

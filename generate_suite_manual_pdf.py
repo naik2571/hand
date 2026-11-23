@@ -530,10 +530,10 @@ def build_pdf():
     summary_box = [
         [Paragraph("<b>QUICK START CHEAT SHEET</b>", table_cell_bold)],
         [Paragraph("<b>1. Start:</b> Double-click <code>run_suite.bat</code> (or run <code>python bridge.py</code>) &rarr; Press [Enter] for Recommended mode.<br/>"
-                   "<b>2. Laptop Mouse:</b> Point Index Finger to steer | Pinch Thumb+Index to Click &amp; Drag (Anti-Shake Lock holds cursor).<br/>"
-                   "<b>3. Android Phone:</b> Press <b>'T'</b> anytime to control your Android Phone over USB/Wi-Fi (Pinch=Tap, 2-Finger=Reels).<br/>"
-                   "<b>4. Virtual Air Harp:</b> Hold a <b>Closed Fist for 1.5s</b> (or press <b>'2'</b>) &rarr; Draw strings in air &amp; pluck.<br/>"
-                   "<b>5. On-Screen Help:</b> Press <b>'H'</b> for on-screen help card | Press <b>'Q'</b> or <b>Esc</b> to exit cleanly.", table_cell_style)]
+                   "<b>2. Laptop Mouse:</b> Point Index to aim | Dip Index (Air-Tap) to Left Click &amp; Drag | 2-Finger Tap=Right Click | Fist/Palm=Air Clutch (arm rest).<br/>"
+                   "<b>3. Android Phone:</b> Press <b>'T'</b> to toggle Android Phone | Index Air-Tap=Touch | 2-Finger=Reels | Hand Air Swing=Switch Tabs.<br/>"
+                   "<b>4. Virtual Air Harp:</b> Hold a <b>Closed Fist for 1.5s</b> (or press <b>'2'</b>) &rarr; Draw strings in air &amp; pluck with fingertips.<br/>"
+                   "<b>5. Controls &amp; Display:</b> Press <b>'F'</b> for Fullscreen | <b>'M'</b> for Camera Flip | <b>'S'</b> for Skeleton Mesh | <b>'Q'</b> / <b>Esc</b> to Exit.", table_cell_style)]
     ]
     t_sum = Table(summary_box, colWidths=[548])
     t_sum.setStyle(TableStyle([

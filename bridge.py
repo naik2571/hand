@@ -138,6 +138,10 @@ class VisionBridge:
         self.detector_thread = threading.Thread(target=self._android_device_listener, daemon=True)
         self.detector_thread.start()
 
+        # Window & Camera Display states
+        self.is_fullscreen = False
+        self.mirror_flip = True
+
         # Welcome card timer (shows for first 6 seconds)
         self.welcome_timer = time.time()
         self.show_welcome = True
@@ -425,22 +429,23 @@ class VisionBridge:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 2, cv2.LINE_AA)
 
         lines = [
-            ("MODE SWITCHING:", (255, 200, 0)),
+            ("MODE SWITCHING & DISPLAY:", (255, 200, 0)),
             (" - Hold closed fist for 1.5s to toggle Controller <-> Air Harp", (200, 200, 200)),
-            (" - Press '1' for Controller | Press '2' for Air Harp", (200, 200, 200)),
+            (" - [1] Controller | [2] Air Harp | [F] Fullscreen | [M] Mirror Flip | [S] Skeleton", (200, 200, 200)),
             ("AIR CONTROLLER (LAPTOP & ANDROID):", (255, 200, 0)),
-            (" - Press 'T' to toggle target: Laptop Mouse <-> Android Phone (ADB)", (200, 200, 200)),
-            (" - Laptop: Point index tip, Pinch to Left/Right Click & Drag", (200, 200, 200)),
-            (" - Android: Pinch to Tap, Two-finger swipe Up/Down for Reels/Shorts", (200, 200, 200)),
-            (" - Android: Open palm flick Left = Back, Flick Up = Home Screen", (200, 200, 200)),
+            (" - [T] Toggle Target: Laptop Mouse <-> Android Phone (ADB)", (200, 200, 200)),
+            (" - Laptop: Point Index to Aim, Tap Index = Left Click, Double Tap = Double Click", (200, 200, 200)),
+            (" - Laptop: Two-finger Tap = Right Click, Two-finger Drag = Scroll, Fist = Rest/Clutch", (200, 200, 200)),
+            (" - Android: Open palm flick Left/Right = Switch Screens/Tabs (Air Swing)", (200, 200, 200)),
+            (" - Android: Two-finger swipe Up/Down = Reels/Shorts | Tap Index = Touch", (200, 200, 200)),
             ("VIRTUAL AIR HARP:", (255, 200, 0)),
             (" - Pinch & drag in air to stretch glowing strings", (200, 200, 200)),
             (" - Pluck strings with fingertip | Press 'C' to clear strings", (200, 200, 200)),
         ]
-        y_offset = cy1 + 60
+        y_offset = cy1 + 55
         for text, col in lines:
-            cv2.putText(frame, text, (cx1 + 20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.40, col, 1, cv2.LINE_AA)
-            y_offset += 23
+            cv2.putText(frame, text, (cx1 + 20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.38, col, 1, cv2.LINE_AA)
+            y_offset += 21
 
     def run(self):
         """Main execution loop."""
@@ -448,7 +453,8 @@ class VisionBridge:
         self.active_module.on_enter()
 
         window_name = "Decoupled Hand-Tracking Suite (Air Controller & Air Harp)"
-        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, 960, 540)
 
         print("\n" + "=" * 70)
         print("  DECOUPLED HAND-TRACKING SUITE RUNNING")
@@ -458,6 +464,9 @@ class VisionBridge:
         print("  - [1]              : Switch to Air Controller")
         print("  - [2]              : Switch to Virtual Air Harp")
         print("  - [T]              : Toggle Target (Laptop Screen <-> Android Phone)")
+        print("  - [F]              : Toggle Fullscreen / Windowed Mode")
+        print("  - [M]              : Toggle Camera Mirror Flip (fixes inverted front cams)")
+        print("  - [S]              : Toggle Full 21-Joint Hand Skeleton Mesh")
         print("  - [K]              : Switch Camera (Webcam 0 <-> Phone Cam 1)")
         print("  - [H]              : Toggle Help & Step-by-Step Guide")
         print("  - [C]              : Clear all strings (in Harp mode)")
@@ -473,8 +482,9 @@ class VisionBridge:
 
                 now = time.time()
 
-                # Mirror frame horizontally once for intuitive direct manipulation
-                frame = cv2.flip(frame, 1)
+                # Mirror frame horizontally for direct manipulation (can be toggled via [M])
+                if self.mirror_flip:
+                    frame = cv2.flip(frame, 1)
 
                 # Convert to RGB MediaPipe image and trigger asynchronous inference
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -547,6 +557,18 @@ class VisionBridge:
                         self.welcome_timer = now
                 elif key == ord('k') or key == ord('K'):
                     self.switch_camera()
+                elif key == ord('f') or key == ord('F'):
+                    self.is_fullscreen = not self.is_fullscreen
+                    prop = cv2.WINDOW_FULLSCREEN if self.is_fullscreen else cv2.WINDOW_NORMAL
+                    cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, prop)
+                    print(f"[Bridge] Fullscreen toggled: {'FULLSCREEN' if self.is_fullscreen else 'WINDOWED'}")
+                elif key == ord('m') or key == ord('M'):
+                    self.mirror_flip = not self.mirror_flip
+                    status_str = "MIRROR (Webcam / Direct Selfie)" if self.mirror_flip else "NORMAL (Inverted Front-Cam Fixed)"
+                    print(f"[Bridge] Camera flip toggled: {status_str}")
+                elif key == ord('s') or key == ord('S'):
+                    if hasattr(self.controller, 'toggle_skeleton'):
+                        self.controller.toggle_skeleton()
                 elif key == ord('h') or key == ord('H'):
                     self.show_help = not self.show_help
                 elif key == ord('c') or key == ord('C'):

@@ -1,7 +1,7 @@
 # Modular Hand-Tracking Suite
 
 An ultra-low latency, computer vision suite powered by MediaPipe and OpenCV, featuring decoupled multi-modal control:
-1. **Air Controller**: Gesture-based mouse pointer and touch controller for Windows desktops and Android smartphones via ADB.
+1. **Air Controller**: Next-Gen "Laser Pointer" mouse and touchless remote controller for Windows 10/11 desktops and Android smartphones via ADB.
 2. **Virtual Air Harp**: Spatial air-synth enabling mid-air string drawing and real-time physical plucked string simulation (Karplus-Strong audio synthesis).
 
 ---
@@ -16,6 +16,9 @@ An ultra-low latency, computer vision suite powered by MediaPipe and OpenCV, fea
                                 v
                       +-------------------+
                       |   Vision Bridge   | (MediaPipe LiteRT Async)
+                      |  - WINDOW_NORMAL  |
+                      |  - [F] Fullscreen |
+                      |  - [M] Mirror Fix |
                       +---------+---------+
                                 |
              +------------------+------------------+
@@ -23,11 +26,15 @@ An ultra-low latency, computer vision suite powered by MediaPipe and OpenCV, fea
              v                                     v
 +------------------------+             +------------------------+
 |     Air Controller     |             |        Air Harp        |
-| - 1€ Velocity Filter   |             | - 2-Hand Pinch Drawing |
-| - Anti-Shake Anchor    |             | - Geometry Intersection|
-| - Win32 Mouse Dispatch |             | - Karplus-Strong Audio |
-| - Android ADB Queue    |             |   (< 20ms sounddevice) |
-+------------------------+             +------------------------+
+| - Laser Pointer Gating |             | - 2-Hand Pinch Drawing |
+| - Air Clutch Rest Mode |             | - Geometry Intersection|
+| - Index Air-Tap Click  |             | - Karplus-Strong Audio |
+| - Anchor-on-Dip Anti-  |             |   (< 20ms sounddevice) |
+|   Shake Drift Lock     |             +------------------------+
+| - 2-Finger Tap / Drag  |
+| - Android Air Swings   |
+| - [S] Skeleton Mesh    |
++------------------------+
 ```
 
 ---
@@ -35,18 +42,23 @@ An ultra-low latency, computer vision suite powered by MediaPipe and OpenCV, fea
 ## Features
 
 ### 1. Air Controller (`air_controller.py`)
-- **Laptop Mouse Mode**:
-  - **Aim**: Index finger tip smoothed via 1€ adaptive filter.
-  - **Left Click**: Pinch Index + Thumb (< 0.28 normalized distance).
-  - **Anti-Shake Click Anchor**: Pins pointer coordinate during pinch gesture to eliminate jitter on click down.
-  - **Right Click**: Pinch Middle + Thumb.
-  - **Drag & Drop**: Hold pinch for > 350 ms.
-  - **Scroll**: Extend Index + Middle fingers together and move vertically.
-- **Android Phone Mode**:
-  - Connects to an Android device via USB/Wi-Fi using ADB.
-  - Translates normalized hand coordinates directly to mobile touch coordinates.
-  - **Two-Finger Vertical Flick**: Automatically swipes between TikTok, Instagram Reels, or YouTube Shorts.
-  - **Open Palm Swipe**: Triggers Android Home (Swipe Up) and Back (Swipe Left) actions.
+- **Laptop Mouse Mode (Win32 Desktop)**:
+  - **Laser Pointer Aiming**: Point single index finger (Middle/Ring/Pinky curled) to smoothly move cursor via 1€ adaptive velocity filter.
+  - **Air Clutch (Arm Rest)**: Relax hand or curl into a loose fist to instantly freeze cursor. You can lift your arm, reposition it to the center of your desk/camera view, and point again without disturbing cursor position.
+  - **Left Click**: Quick Index Air-Tap (downward dip & release in < 300 ms).
+  - **Anti-Shake "Anchor-on-Dip"**: Automatically locks cursor coordinate the millisecond dip starts so clicking never slips off desktop icons.
+  - **Double Click**: Two quick Index Air-Taps within 350 ms.
+  - **Click & Drag**: Sustained index dip (> 350 ms) while moving arm; straightening finger releases drag cleanly.
+  - **Right Click**: Two-Finger Air-Tap (Index + Middle extended, quick synchronized dip < 200 ms).
+  - **Scroll**: Two-Finger Drag (Index + Middle extended, continuous vertical motion > 250 ms).
+- **Android Phone Mode (ADB Remote Control)**:
+  - **Air Swing Tab Navigation**: Quick horizontal hand flick left or right to switch app screens and tabs (with 0.6s return debounce).
+  - **Touch / Tap**: Index Air-Tap sends high-precision touch event to phone.
+  - **Reels / Shorts Scroll**: Two-finger vertical swipe flips video feeds.
+  - **Home & Back Navigation**: Open palm upward flick = Home; leftward flick = Back.
+- **Visuals**:
+  - **Minimalist Reticle**: Default high-visibility cyan target at index tip.
+  - **[S] Skeleton Mesh**: Toggles complete 21-joint glowing hand skeleton with anatomical bone linkages.
 
 ### 2. Virtual Air Harp (`air_harp.py`)
 - **Pinch-to-Draw**: Pinch Index and Thumb on both hands simultaneously to stretch a virtual string between them. Releasing pins the string in 3D air.
@@ -64,7 +76,7 @@ An ultra-low latency, computer vision suite powered by MediaPipe and OpenCV, fea
 
 ### Installation
 ```bash
-git clone https://github.com/<your-username>/<repo-name>.git
+git clone https://github.com/naik2571/hand.git
 cd hand
 pip install -r requirements.txt
 ```
@@ -76,16 +88,19 @@ python bridge.py
 ```
 
 ### Hotkeys & Controls
-| Key / Gesture | Function |
-| :--- | :--- |
-| **`[1]`** | Switch to Air Controller (Laptop Mouse) |
-| **`[2]`** | Switch to Air Controller (Android Phone ADB) |
-| **`[3]`** | Switch to Virtual Air Harp |
-| **`[T]`** | Toggle between Laptop Mouse and Android Phone target |
-| **`[C]`** | Switch Camera index (Cycle 0, 1, 2...) / Clear Harp strings |
-| **`[H]`** | Toggle On-Screen Controls HUD |
-| **`[Hold Fist 1.5s]`** | Gesture-switch between Controller and Harp |
-| **`[Q]` / `[Esc]`** | Exit application cleanly |
+| Key / Gesture | Scope | Function |
+| :--- | :--- | :--- |
+| **`[1]`** | Suite | Switch to Air Controller (Laptop Mouse / Android) |
+| **`[2]`** | Suite | Switch to Virtual Air Harp |
+| **`[T]`** | Controller | Toggle target: **Laptop Mouse <-> Android Phone (ADB)** |
+| **`[F]`** | Display | **Toggle Fullscreen Mode** (Auto-scales feed cleanly across display) |
+| **`[M]`** | Vision | **Toggle Camera Mirror Flip** (Fixes inverted Android front cameras) |
+| **`[S]`** | Controller | **Toggle Full 21-Joint Hand Skeleton Mesh** on/off |
+| **`[K]`** | Universal | Switch Camera index (Cycle Laptop Webcam 0 <-> Phone Cam 1) |
+| **`[H]`** | Universal | Toggle On-Screen Guide & Controls HUD |
+| **`[C]`** | Harp | Clear active mid-air strings |
+| **`[Hold Fist 1.5s]`** | Air Gesture | Toggle between Controller and Harp |
+| **`[Q]` / `[Esc]`** | Universal | Cleanly exit suite and release all hardware locks |
 
 ---
 

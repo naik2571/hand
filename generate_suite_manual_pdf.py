@@ -261,6 +261,12 @@ def build_pdf():
          Paragraph("Instantly activates Virtual Air Harp mode (Musical String Synth).", table_cell_style)],
         [Paragraph("<b>Key 'T'</b>", table_cell_bold), Paragraph("Controller Mode", table_cell_style),
          Paragraph("Toggles active target between <b>Laptop Windows Screen</b> and <b>Android Phone (ADB)</b>.", table_cell_style)],
+        [Paragraph("<b>Key 'F'</b>", table_cell_bold), Paragraph("Universal Display", table_cell_style),
+         Paragraph("Toggles <b>Fullscreen</b> mode (auto-scales 640x480 feed across full screen without corner boxes).", table_cell_style)],
+        [Paragraph("<b>Key 'M'</b>", table_cell_bold), Paragraph("Vision", table_cell_style),
+         Paragraph("Toggles <b>Camera Mirror Flip</b> (inverts horizontal flip to fix pre-mirrored phone front cams).", table_cell_style)],
+        [Paragraph("<b>Key 'S'</b>", table_cell_bold), Paragraph("Controller Visuals", table_cell_style),
+         Paragraph("Toggles between <b>Minimal Laser Pointer</b> and the <b>Full 21-Joint Glowing Skeleton Mesh</b>.", table_cell_style)],
         [Paragraph("<b>Key 'K'</b>", table_cell_bold), Paragraph("Universal", table_cell_style),
          Paragraph("Switches camera feed on the fly (Laptop Webcam 0 &harr; Phone Camera 1 via DroidCam).", table_cell_style)],
         [Paragraph("<b>Key 'H'</b>", table_cell_bold), Paragraph("Universal", table_cell_style),
@@ -298,27 +304,27 @@ def build_pdf():
 
     controller_gestures = [
         [Paragraph("Desktop Action", table_header_style), Paragraph("Finger Gesture", table_header_style), Paragraph("Behavior & Anti-Shake Stabilization", table_header_style)],
-        [Paragraph("<b>Move Cursor</b>", table_cell_bold),
-         Paragraph("Point index fingertip (Landmark 8) with thumb relaxed.", table_cell_style),
+        [Paragraph("<b>Move Cursor (Aim)</b>", table_cell_bold),
+         Paragraph("<b>Laser Pointer:</b> Point single index finger (Middle/Ring/Pinky curled).", table_cell_style),
          Paragraph("Smooth 1:1 motion filtered by a 1&euro; adaptive velocity filter mapped to 1366x768 display.", table_cell_style)],
+        [Paragraph("<b>Air Clutch (Rest)</b>", table_cell_bold),
+         Paragraph("Curl into loose fist or open flat palm.", table_cell_style),
+         Paragraph("<b>Pointer Freeze:</b> Freezes cursor in place completely so you can rest or reposition your arm.", table_cell_style)],
         [Paragraph("<b>Left Click</b>", table_cell_bold),
-         Paragraph("Quick pinch between Thumb and Index finger (&lt;250 ms).", table_cell_style),
-         Paragraph("<b>Anti-Shake Lock:</b> Cursor freezes in place during pinch so finger motion does not slip off targets.", table_cell_style)],
+         Paragraph("<b>Index Air-Tap:</b> Quick downward dip and return (&lt;300 ms).", table_cell_style),
+         Paragraph("<b>Anchor-on-Dip:</b> Cursor coordinates freeze during dip so tap never slips off desktop icons.", table_cell_style)],
         [Paragraph("<b>Double Click</b>", table_cell_bold),
-         Paragraph("Two quick pinches within 400 ms.", table_cell_style),
+         Paragraph("Two rapid Index Air-Taps within 350 ms.", table_cell_style),
          Paragraph("Fires native double left-click event to open files, folders, and desktop shortcuts.", table_cell_style)],
         [Paragraph("<b>Click &amp; Drag</b>", table_cell_bold),
-         Paragraph("Sustained pinch (&gt;350 ms) held while moving your hand.", table_cell_style),
-         Paragraph("Locks MOUSEEVENTF_LEFTDOWN. Allows dragging windows, moving sliders, or selecting text.", table_cell_style)],
+         Paragraph("Sustained index dip (&gt;350 ms) held while moving arm.", table_cell_style),
+         Paragraph("Locks MOUSEEVENTF_LEFTDOWN. Straightening index finger cleanly releases drag.", table_cell_style)],
         [Paragraph("<b>Right Click</b>", table_cell_bold),
-         Paragraph("Quick pinch between Thumb and Middle finger (Landmarks 4 &amp; 12).", table_cell_style),
-         Paragraph("Fires native right-click event to open context menus without needing to pause or hold cursor.", table_cell_style)],
+         Paragraph("<b>Two-Finger Air-Tap:</b> Index and Middle extended, simultaneous quick dip (&lt;200 ms).", table_cell_style),
+         Paragraph("Fires native right-click event to open context menus without cursor drift.", table_cell_style)],
         [Paragraph("<b>Two-Finger Scroll</b>", table_cell_bold),
-         Paragraph("Index and Middle fingers extended upright together; move hand vertically.", table_cell_style),
+         Paragraph("Index and Middle extended upright together; sustained vertical motion (&gt;250 ms).", table_cell_style),
          Paragraph("Generates smooth mouse wheel scroll events (MOUSEEVENTF_WHEEL) for web pages and documents.", table_cell_style)],
-        [Paragraph("<b>Arm Rest / Clutch</b>", table_cell_bold),
-         Paragraph("Curl all fingers into a loose fist or relax hand below active box.", table_cell_style),
-         Paragraph("Freezes pointer completely. Allows you to rest or reposition your arm without moving the cursor.", table_cell_style)],
     ]
     t_ctrl = Table(controller_gestures, colWidths=[105, 165, 278])
     t_ctrl.setStyle(TableStyle([
@@ -335,7 +341,7 @@ def build_pdf():
     story.append(Spacer(1, 4))
 
     story.append(Paragraph("<b>Anti-Shake Click Anchor &amp; Ergonomics Advice:</b>", h2_style))
-    story.append(Paragraph("<b>1. How the Anchor Works:</b> When closing your thumb and index finger to click, natural biomechanics cause the index fingertip to shift 15–30 pixels. The software detects the pre-pinch motion and automatically freezes cursor coordinates on your intended button until the pinch releases.", bullet_style))
+    story.append(Paragraph("<b>1. How the Anchor Works:</b> When dipping your index finger downward to click, natural biomechanics cause the fingertip to shift 10–25 pixels. The software detects the downward dip velocity and freezes cursor coordinates on your intended button until the finger returns up.", bullet_style))
     story.append(Paragraph("<b>2. Forearm Resting:</b> Always rest your forearm or elbow on the desk or chair armrest. Pivot from your wrist and fingers—never hover your entire shoulder in mid-air (prevents 'gorilla arm' fatigue).", bullet_style))
     story.append(Spacer(1, 6))
 
@@ -347,8 +353,11 @@ def build_pdf():
 
     android_gestures = [
         [Paragraph("Phone Action", table_header_style), Paragraph("Finger Gesture", table_header_style), Paragraph("ADB Command Executed", table_header_style)],
+        [Paragraph("<b>Next / Prev Tab (Air Swing)</b>", table_cell_bold),
+         Paragraph("Fast horizontal hand flick to the <b>RIGHT or LEFT</b>.", table_cell_style),
+         Paragraph("Executes horizontal swipe (<code>input swipe X1 Y X2 Y 160</code>) with 0.6s return debounce.", table_cell_style)],
         [Paragraph("<b>Touch / Tap Screen</b>", table_cell_bold),
-         Paragraph("Quick pinch between Thumb and Index finger.", table_cell_style),
+         Paragraph("<b>Index Air-Tap:</b> Quick downward dip and release.", table_cell_style),
          Paragraph("Translates finger position into phone resolution and executes <code>adb shell input tap X Y</code>.", table_cell_style)],
         [Paragraph("<b>Next Reel / Short</b>", table_cell_bold),
          Paragraph("Two fingers extended upright &rarr; <b>Swipe UP</b>.", table_cell_style),

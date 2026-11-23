@@ -2,6 +2,13 @@ package com.hand.airtouch
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.graphics.Path
@@ -21,6 +28,7 @@ import android.widget.Toast
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -51,8 +59,24 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
     private var isCameraBound = false
     private var cursorSizePx = 64
 
+    private var isAirTouchPaused = false
+    private val notificationManager by lazy { getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager }
+
+    private val controlReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                ACTION_STOP_AIRTOUCH -> stopAllFunctions()
+                ACTION_RESUME_AIRTOUCH -> resumeAllFunctions()
+            }
+        }
+    }
+
     companion object {
         var instance: AirTouchAccessibilityService? = null
+        const val ACTION_STOP_AIRTOUCH = "com.hand.airtouch.ACTION_STOP_AIRTOUCH"
+        const val ACTION_RESUME_AIRTOUCH = "com.hand.airtouch.ACTION_RESUME_AIRTOUCH"
+        private const val NOTIFICATION_ID = 1001
+        private const val CHANNEL_ID = "airtouch_status_channel"
     }
 
     override fun onCreate() {
@@ -76,6 +100,85 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
         initMediaPipe()
         showFloatingBubble()
         showFloatingCursor(metrics.widthPixels, metrics.heightPixels)
+
+        val filter = IntentFilter().apply {
+            addAction(ACTION_STOP_AIRTOUCH)
+            addAction(ACTION_RESUME_AIRTOUCH)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(controlReceiver, filter)
+        }
+        createNotificationChannel()
+        showStatusNotification()
+    }
+
+    fun stopAllFunctions() {
+        isAirTouchPaused = true
+        stopBackgroundCameraTracking()
+        cursorView?.post { cursorView?.visibility = View.GONE }
+        overlayView?.post { overlayView?.visibility = View.GONE }
+        showStatusNotification()
+        Toast.makeText(this, "AirTouch Stopped / Closed", Toast.LENGTH_SHORT).show()
+        Log.d(TAG, "AirTouch stopped all functions via notification")
+    }
+
+    fun resumeAllFunctions() {
+        isAirTouchPaused = false
+        overlayView?.post { overlayView?.visibility = View.VISIBLE }
+        startBackgroundCameraTracking()
+        showStatusNotification()
+        Toast.makeText(this, "AirTouch Resumed", Toast.LENGTH_SHORT).show()
+        Log.d(TAG, "AirTouch resumed all functions via notification")
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "AirTouch Status & Controls",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Quick notification controls to stop or pause AirTouch"
+                setShowBadge(false)
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun showStatusNotification() {
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val openPending = PendingIntent.getActivity(
+            this, 0, openAppIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(openPending)
+            .setOngoing(!isAirTouchPaused)
+
+        if (isAirTouchPaused) {
+            val resumeIntent = Intent(ACTION_RESUME_AIRTOUCH).apply { setPackage(packageName) }
+            val resumePending = PendingIntent.getBroadcast(
+                this, 2, resumeIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.setContentTitle("AirTouch: Stopped / Closed")
+                .setContentText("Camera and gestures disabled. Tap Resume to restart.")
+                .addAction(android.R.drawable.ic_media_play, "▶ RESUME", resumePending)
+        } else {
+            val stopIntent = Intent(ACTION_STOP_AIRTOUCH).apply { setPackage(packageName) }
+            val stopPending = PendingIntent.getBroadcast(
+                this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.setContentTitle("AirTouch: Active")
+                .setContentText("Hand gesture tracking active. Tap Stop to shut off.")
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "🛑 STOP / CLOSE", stopPending)
+        }
+
+        notificationManager.notify(NOTIFICATION_ID, builder.build())
     }
 
     private fun initMediaPipe() {
@@ -164,6 +267,10 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
     }
 
     private fun handleDetectionResult(result: HandLandmarkerResult) {
+        if (isAirTouchPaused) {
+            updateCursorPosition(0f, 0f, false, isVisible = false)
+            return
+        }
         val landmarksList = result.landmarks()
         if (landmarksList.isNotEmpty()) {
             val primaryHand = landmarksList[0]
@@ -211,6 +318,7 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
     }
 
     fun executeGesture(action: GestureAction) {
+        if (isAirTouchPaused) return
         when (action) {
             is GestureAction.Tap -> {
                 Log.d(TAG, "Dispatching Tap at (${action.x}, ${action.y})")
@@ -366,6 +474,10 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
         super.onDestroy()
         instance = null
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        try {
+            unregisterReceiver(controlReceiver)
+        } catch (_: Exception) {}
+        notificationManager.cancel(NOTIFICATION_ID)
         cursorView?.let { windowManager?.removeView(it) }
         overlayView?.let { windowManager?.removeView(it) }
         handLandmarker?.close()

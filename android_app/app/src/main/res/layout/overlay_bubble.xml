@@ -1,28 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/bubble_root"
-    android:layout_width="80dp"
-    android:layout_height="80dp"
+    android:layout_width="48dp"
+    android:layout_height="48dp"
     android:background="@drawable/bubble_background"
     android:elevation="12dp">
 
-    <androidx.camera.view.PreviewView
-        android:id="@+id/bubble_camera_preview"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+    <!-- Small hand gesture icon -->
+    <ImageView
+        android:id="@+id/bubble_icon"
+        android:layout_width="26dp"
+        android:layout_height="26dp"
+        android:layout_gravity="center"
+        android:src="@android:drawable/ic_menu_camera" />
 
-    <TextView
-        android:id="@+id/bubble_badge"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="AIRTOUCH"
-        android:textColor="#FFFFFF"
-        android:textSize="9sp"
-        android:textStyle="bold"
-        android:paddingLeft="4dp"
-        android:paddingRight="4dp"
-        android:background="#99000000"
-        android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="2dp" />
+    <!-- Tiny status dot in corner -->
+    <View
+        android:id="@+id/bubble_status_dot"
+        android:layout_width="10dp"
+        android:layout_height="10dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="3dp"
+        android:background="@drawable/bubble_indicator_green" />
 
 </FrameLayout>

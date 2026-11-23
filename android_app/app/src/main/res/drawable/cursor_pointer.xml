@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+
+    <!-- Outer Glow Ring -->
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="2.5"
+        android:pathData="M18,6 A12,12 0 1,0 18,30 A12,12 0 1,0 18,6 Z"/>
+
+    <!-- Crosshair ticks -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:pathData="M18,2 L18,7 M18,29 L18,34 M2,18 L7,18 M29,18 L34,18"/>
+
+    <!-- Center Laser Dot -->
+    <path
+        android:fillColor="#00FF66"
+        android:pathData="M18,14 A4,4 0 1,0 18,22 A4,4 0 1,0 18,14 Z"/>
+
+</vector>

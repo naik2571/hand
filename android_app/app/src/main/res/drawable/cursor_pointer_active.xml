@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+
+    <!-- Active Glow Ring -->
+    <path
+        android:strokeColor="#FACC15"
+        android:strokeWidth="3.5"
+        android:pathData="M18,5 A13,13 0 1,0 18,31 A13,13 0 1,0 18,5 Z"/>
+
+    <!-- Crosshairs -->
+    <path
+        android:strokeColor="#FF3B30"
+        android:strokeWidth="2.5"
+        android:pathData="M18,1 L18,7 M18,29 L18,35 M1,18 L7,18 M29,18 L35,18"/>
+
+    <!-- Center Tap Dot -->
+    <path
+        android:fillColor="#FF3B30"
+        android:pathData="M18,13 A5,5 0 1,0 18,23 A5,5 0 1,0 18,13 Z"/>
+
+</vector>

@@ -14,7 +14,9 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.View
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -44,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnTestTarget: Button
     private lateinit var tvStatus: TextView
     private lateinit var previewView: PreviewView
+    private lateinit var inAppCursor: ImageView
 
     private var gestureDetector: HandGestureDetector? = null
     private var handLandmarker: HandLandmarker? = null
@@ -62,6 +65,7 @@ class MainActivity : AppCompatActivity() {
         btnTestTarget = findViewById(R.id.btn_test_target)
         tvStatus = findViewById(R.id.tv_status)
         previewView = findViewById(R.id.camera_preview)
+        inAppCursor = findViewById(R.id.in_app_cursor)
 
         val metrics = DisplayMetrics()
         windowManager.defaultDisplay.getRealMetrics(metrics)
@@ -127,6 +131,7 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Error unbinding camera on pause: ${e.message}")
             }
         }
+        inAppCursor.visibility = View.GONE
         // Handover camera to background accessibility service
         AirTouchAccessibilityService.instance?.startBackgroundCameraTracking()
     }
@@ -246,8 +251,28 @@ class MainActivity : AppCompatActivity() {
             if (landmarksList.isNotEmpty()) {
                 val primaryHand = landmarksList[0]
                 val action = gestureDetector?.processLandmarks(primaryHand)
-                val stateText = gestureDetector?.lastDetectedState ?: "TRACKING"
+                val gd = gestureDetector
 
+                if (gd != null) {
+                    val cx = gd.currentPointerX
+                    val cy = gd.currentPointerY
+                    val isDipping = gd.isDippingOrPinching
+
+                    // Update in-app visible laser reticle cursor
+                    inAppCursor.visibility = View.VISIBLE
+                    inAppCursor.x = cx - inAppCursor.width / 2f
+                    inAppCursor.y = cy - inAppCursor.height / 2f
+                    if (isDipping) {
+                        inAppCursor.setImageResource(R.drawable.cursor_pointer_active)
+                    } else {
+                        inAppCursor.setImageResource(R.drawable.cursor_pointer)
+                    }
+
+                    // Also feed system-wide overlay cursor
+                    AirTouchAccessibilityService.instance?.updateCursorFromExternal(cx, cy, isDipping, isVisible = true)
+                }
+
+                val stateText = gd?.lastDetectedState ?: "TRACKING"
                 tvStatus.text = "HAND DETECTED!\nState: $stateText"
                 tvStatus.setTextColor(Color.parseColor("#4ADE80")) // Bright Green
 
@@ -263,6 +288,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } else {
+                inAppCursor.visibility = View.GONE
+                AirTouchAccessibilityService.instance?.updateCursorFromExternal(0f, 0f, false, isVisible = false)
                 tvStatus.text = "No Hand Detected\nHold your hand in front of the camera"
                 tvStatus.setTextColor(Color.parseColor("#94A3B8")) // Slate Gray
             }

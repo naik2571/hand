@@ -16,12 +16,11 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.widget.TextView
+import android.widget.ImageView
+import android.widget.Toast
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -42,11 +41,15 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
 
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
+    private var cursorView: ImageView? = null
+    private var cursorParams: WindowManager.LayoutParams? = null
+
     private var gestureDetector: HandGestureDetector? = null
     private var handLandmarker: HandLandmarker? = null
     private val cameraExecutor = Executors.newSingleThreadExecutor()
     private var lastTimestampMs = 0L
     private var isCameraBound = false
+    private var cursorSizePx = 64
 
     companion object {
         var instance: AirTouchAccessibilityService? = null
@@ -68,9 +71,11 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         wm.defaultDisplay.getRealMetrics(metrics)
 
+        cursorSizePx = (28 * resources.displayMetrics.density).toInt()
         gestureDetector = HandGestureDetector(metrics.widthPixels, metrics.heightPixels)
         initMediaPipe()
         showFloatingBubble()
+        showFloatingCursor(metrics.widthPixels, metrics.heightPixels)
     }
 
     private fun initMediaPipe() {
@@ -92,7 +97,7 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
                 .build()
 
             handLandmarker = HandLandmarker.createFromOptions(this, options)
-            Log.d(TAG, "MediaPipe HandLandmarker initialized in Accessibility Service")
+            Log.d(TAG, "MediaPipe HandLandmarker initialized in Service")
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing MediaPipe in Service: ${e.message}")
         }
@@ -100,15 +105,11 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
 
     fun startBackgroundCameraTracking() {
         if (isCameraBound) return
-        val bubblePreview = overlayView?.findViewById<PreviewView>(R.id.bubble_camera_preview) ?: return
 
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             try {
                 val cameraProvider = cameraProviderFuture.get()
-                val preview = Preview.Builder().build().also {
-                    it.setSurfaceProvider(bubblePreview.surfaceProvider)
-                }
 
                 val imageAnalysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -141,9 +142,9 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
 
                 val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
                 cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis)
+                cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis)
                 isCameraBound = true
-                Log.d(TAG, "Background camera bound to AccessibilityService successfully")
+                Log.d(TAG, "Background camera bound to AccessibilityService successfully (clean invisible feed)")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start background camera: ${e.message}")
             }
@@ -167,7 +168,44 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
         if (landmarksList.isNotEmpty()) {
             val primaryHand = landmarksList[0]
             val action = gestureDetector?.processLandmarks(primaryHand)
+            val gd = gestureDetector
+            if (gd != null) {
+                updateCursorPosition(gd.currentPointerX, gd.currentPointerY, gd.isDippingOrPinching, isVisible = true)
+            }
             action?.let { executeGesture(it) }
+        } else {
+            updateCursorPosition(0f, 0f, false, isVisible = false)
+        }
+    }
+
+    fun updateCursorFromExternal(x: Float, y: Float, isTapping: Boolean, isVisible: Boolean) {
+        updateCursorPosition(x, y, isTapping, isVisible)
+    }
+
+    private fun updateCursorPosition(x: Float, y: Float, isTapping: Boolean, isVisible: Boolean) {
+        cursorView?.post {
+            try {
+                cursorView?.let { cv ->
+                    if (!isVisible) {
+                        cv.visibility = View.GONE
+                        return@post
+                    }
+                    cv.visibility = View.VISIBLE
+                    if (isTapping) {
+                        cv.setImageResource(R.drawable.cursor_pointer_active)
+                    } else {
+                        cv.setImageResource(R.drawable.cursor_pointer)
+                    }
+                    cursorParams?.let { cp ->
+                        val halfSize = cursorSizePx / 2
+                        cp.x = (x - halfSize).toInt()
+                        cp.y = (y - halfSize).toInt()
+                        windowManager?.updateViewLayout(cv, cp)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error updating cursor position: ${e.message}")
+            }
         }
     }
 
@@ -177,20 +215,11 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
                 Log.d(TAG, "Dispatching Tap at (${action.x}, ${action.y})")
                 val path = Path().apply {
                     moveTo(action.x, action.y)
-                    lineTo(action.x + 1f, action.y + 1f) // Required for non-empty stroke
+                    lineTo(action.x + 1f, action.y + 1f)
                 }
                 val stroke = GestureDescription.StrokeDescription(path, 0, 80)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
-                val ok = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        Log.d(TAG, "TAP gesture completed successfully!")
-                        flashBadge("TAP!")
-                    }
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        Log.e(TAG, "TAP gesture cancelled by system")
-                    }
-                }, null)
-                Log.d(TAG, "dispatchGesture(Tap) returned: $ok")
+                dispatchGesture(gesture, null, null)
             }
             is GestureAction.Swipe -> {
                 Log.d(TAG, "Dispatching Swipe from (${action.x1}, ${action.y1}) to (${action.x2}, ${action.y2})")
@@ -198,41 +227,16 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
                     moveTo(action.x1, action.y1)
                     lineTo(action.x2, action.y2)
                 }
-                val stroke = GestureDescription.StrokeDescription(path, 0, 320)
+                val stroke = GestureDescription.StrokeDescription(path, 0, 300)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
-                val ok = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        Log.d(TAG, "SWIPE gesture completed successfully!")
-                        flashBadge("SWIPE!")
-                    }
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        Log.e(TAG, "SWIPE gesture cancelled by system")
-                    }
-                }, null)
-                Log.d(TAG, "dispatchGesture(Swipe) returned: $ok")
+                dispatchGesture(gesture, null, null)
             }
             is GestureAction.Back -> {
-                Log.d(TAG, "Performing Global Back")
                 performGlobalAction(GLOBAL_ACTION_BACK)
-                flashBadge("BACK")
             }
             is GestureAction.Home -> {
-                Log.d(TAG, "Performing Global Home")
                 performGlobalAction(GLOBAL_ACTION_HOME)
-                flashBadge("HOME")
             }
-        }
-    }
-
-    private fun flashBadge(text: String) {
-        overlayView?.post {
-            val badge = overlayView?.findViewById<TextView>(R.id.bubble_badge)
-            badge?.text = text
-            badge?.setBackgroundColor(0xCC00E5FF.toInt())
-            badge?.postDelayed({
-                badge.text = "AIRTOUCH"
-                badge.setBackgroundColor(0x99000000.toInt())
-            }, 600)
         }
     }
 
@@ -246,21 +250,22 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
                 WindowManager.LayoutParams.TYPE_PHONE
             }
 
+            val bubbleDimPx = (48 * resources.displayMetrics.density).toInt()
             val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
+                bubbleDimPx,
+                bubbleDimPx,
                 layoutType,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = 30
-                y = 150
+                x = 20
+                y = 220
             }
 
             overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_bubble, null)
 
-            // Drag floating bubble anywhere
+            // Drag floating bubble to any corner out of the way
             overlayView?.setOnTouchListener(object : View.OnTouchListener {
                 private var initialX = 0
                 private var initialY = 0
@@ -288,9 +293,48 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
             })
 
             windowManager?.addView(overlayView, params)
-            Log.d(TAG, "Floating overlay bubble added to WindowManager")
+            Log.d(TAG, "Floating discrete 48dp bubble added to WindowManager")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show overlay bubble: ${e.message}")
+        }
+    }
+
+    private fun showFloatingCursor(screenWidth: Int, screenHeight: Int) {
+        try {
+            if (cursorView != null) return
+            val wm = windowManager ?: getSystemService(WINDOW_SERVICE) as WindowManager
+            windowManager = wm
+
+            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            }
+
+            cursorParams = WindowManager.LayoutParams(
+                cursorSizePx,
+                cursorSizePx,
+                layoutType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = screenWidth / 2 - cursorSizePx / 2
+                y = screenHeight / 2 - cursorSizePx / 2
+            }
+
+            cursorView = ImageView(this).apply {
+                setImageResource(R.drawable.cursor_pointer)
+                visibility = View.GONE
+            }
+
+            wm.addView(cursorView, cursorParams)
+            Log.d(TAG, "Laser pointer cursor overlay added to WindowManager")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create floating cursor: ${e.message}")
         }
     }
 
@@ -301,6 +345,7 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
         super.onDestroy()
         instance = null
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        cursorView?.let { windowManager?.removeView(it) }
         overlayView?.let { windowManager?.removeView(it) }
         handLandmarker?.close()
         cameraExecutor.shutdown()

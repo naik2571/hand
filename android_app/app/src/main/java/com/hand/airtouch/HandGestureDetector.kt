@@ -18,6 +18,18 @@ class HandGestureDetector(
     var lastDetectedState: String = "NO HAND"
         private set
 
+    var currentPointerX: Float = screenWidth / 2f
+        private set
+    var currentPointerY: Float = screenHeight / 2f
+        private set
+    var isDippingOrPinching: Boolean = false
+        private set
+    var isHandPresent: Boolean = false
+        private set
+
+    private var smoothX: Float = screenWidth / 2f
+    private var smoothY: Float = screenHeight / 2f
+
     private var lastGestureTime = 0L
     private var lastScrollY = 0f
     private var isScrolling = false
@@ -36,9 +48,12 @@ class HandGestureDetector(
     fun processLandmarks(landmarks: List<NormalizedLandmark>): GestureAction? {
         val now = SystemClock.uptimeMillis()
         if (landmarks.size < 21) {
+            isHandPresent = false
+            isDippingOrPinching = false
             lastDetectedState = "NO HAND"
             return null
         }
+        isHandPresent = true
 
         val wrist = landmarks[0]
         val thumbTip = landmarks[4]
@@ -63,18 +78,27 @@ class HandGestureDetector(
         val isTwoFinger = indexExtended && middleExtended && !ringExtended && !pinkyExtended
         val isFist = !indexExtended && !middleExtended && !ringExtended && !pinkyExtended
 
-        // Map index tip into screen space
-        val mappedX = indexTip.x().coerceIn(0f, 1f) * screenWidth
-        val mappedY = indexTip.y().coerceIn(0f, 1f) * screenHeight
+        // Active 70% boundary mapping with smoothing for steady pointer control
+        val normX = ((indexTip.x() - 0.15f) / 0.70f).coerceIn(0f, 1f)
+        val normY = ((indexTip.y() - 0.15f) / 0.70f).coerceIn(0f, 1f)
+        val rawMappedX = normX * screenWidth
+        val rawMappedY = normY * screenHeight
+
+        // Smooth cursor translation (removes physiological tremor)
+        smoothX += 0.35f * (rawMappedX - smoothX)
+        smoothY += 0.35f * (rawMappedY - smoothY)
+        currentPointerX = smoothX
+        currentPointerY = smoothY
 
         // -------------------------------------------------------------
-        // 1. Air Clutch / Closed Fist (Freezes and resets)
+        // 1. Air Clutch / Closed Fist (Freezes pointer and resets)
         // -------------------------------------------------------------
         if (isFist) {
-            lastDetectedState = "FIST (IDLE CLUTCH)"
+            lastDetectedState = "FIST (AIR CLUTCH - FROZEN)"
             tapState = "IDLE"
             clickAnchorPos = null
             isScrolling = false
+            isDippingOrPinching = false
             return null
         }
 
@@ -83,6 +107,7 @@ class HandGestureDetector(
         // -------------------------------------------------------------
         if (isOpenPalm) {
             lastDetectedState = "OPEN PALM"
+            isDippingOrPinching = false
             if (now - lastGestureTime > 800) {
                 if (indexTip.x() < 0.20f) {
                     lastGestureTime = now
@@ -132,6 +157,7 @@ class HandGestureDetector(
         // -------------------------------------------------------------
         if (isTwoFinger) {
             lastDetectedState = "TWO FINGERS (SCROLL MODE)"
+            isDippingOrPinching = false
             val currY = (indexTip.y() + middleTip.y()) / 2f
             if (!isScrolling) {
                 isScrolling = true
@@ -144,10 +170,10 @@ class HandGestureDetector(
                     lastGestureTime = now
                     return if (dy < 0) {
                         lastDetectedState = "ACTION: NEXT REEL [SWIPE UP]"
-                        GestureAction.Swipe(cx, screenHeight * 0.75f, cx, screenHeight * 0.25f, 220)
+                        GestureAction.Swipe(cx, screenHeight * 0.75f, cx, screenHeight * 0.25f, 240)
                     } else {
                         lastDetectedState = "ACTION: PREV REEL [SWIPE DOWN]"
-                        GestureAction.Swipe(cx, screenHeight * 0.25f, cx, screenHeight * 0.75f, 220)
+                        GestureAction.Swipe(cx, screenHeight * 0.25f, cx, screenHeight * 0.75f, 240)
                     }
                 }
             }
@@ -167,11 +193,12 @@ class HandGestureDetector(
         val isPinched = pinchDist < 0.34f
         val isTapped = (indexDipY < 0.16f || indexFlex < 0.58f) && !middleExtended
         val isDipping = isPinched || isTapped
+        isDippingOrPinching = isDipping
 
         if (isDipping) {
             lastDetectedState = if (isPinched) "PINCHING THUMB+INDEX" else "INDEX DIPPING"
             if (clickAnchorPos == null) {
-                clickAnchorPos = Pair(mappedX, mappedY)
+                clickAnchorPos = Pair(currentPointerX, currentPointerY)
             }
             if (tapState == "IDLE") {
                 tapState = "DIPPED"
@@ -181,7 +208,7 @@ class HandGestureDetector(
             if (tapState == "DIPPED") {
                 val dipDur = now - tapStartTime
                 if (dipDur in 40..550 && (now - lastGestureTime > 300)) {
-                    val targetPos = clickAnchorPos ?: Pair(mappedX, mappedY)
+                    val targetPos = clickAnchorPos ?: Pair(currentPointerX, currentPointerY)
                     lastGestureTime = now
                     tapState = "IDLE"
                     clickAnchorPos = null

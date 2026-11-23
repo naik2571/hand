@@ -6,6 +6,7 @@ import kotlin.math.hypot
 
 sealed class GestureAction {
     data class Tap(val x: Float, val y: Float) : GestureAction()
+    data class DoubleTap(val x: Float, val y: Float) : GestureAction()
     data class Swipe(val x1: Float, val y1: Float, val x2: Float, val y2: Float, val durationMs: Long) : GestureAction()
     object Back : GestureAction()
     object Home : GestureAction()
@@ -52,6 +53,19 @@ class HandGestureDetector(
     private var clickAnchorPos: Pair<Float, Float>? = null
     private var tapState = "IDLE"
     private var tapStartTime = 0L
+
+    // Double-Tap Engine (Instant Like / Zoom)
+    private var lastTapReleaseTime: Long = 0L
+    private var lastTapPos: Pair<Float, Float>? = null
+
+    // Hover-to-Open (Dwell Auto-Click after 0.85s stillness)
+    private var hoverAnchorX: Float = screenWidth / 2f
+    private var hoverAnchorY: Float = screenHeight / 2f
+    private var hoverStartTime: Long = 0L
+    private var isHoverTriggered: Boolean = false
+    private var hoverCooldownUntil: Long = 0L
+    var hoverProgress: Float = 0f
+        private set
 
     private fun dist(p1: NormalizedLandmark, p2: NormalizedLandmark): Float {
         return hypot(p1.x() - p2.x(), p1.y() - p2.y())
@@ -115,6 +129,9 @@ class HandGestureDetector(
             lastTwoFingerY = null
             lastScrollDirection = null
             isScrollArmed = true
+            hoverProgress = 0f
+            isHoverTriggered = false
+            hoverStartTime = now
             return null
         }
 
@@ -124,6 +141,9 @@ class HandGestureDetector(
         if (isOpenPalm) {
             lastDetectedState = "OPEN PALM"
             isDippingOrPinching = false
+            hoverProgress = 0f
+            isHoverTriggered = false
+            hoverStartTime = now
             if (now - lastGestureTime > 800) {
                 if (indexTip.x() < 0.20f) {
                     lastGestureTime = now
@@ -182,6 +202,9 @@ class HandGestureDetector(
         if (isTwoFinger) {
             lastDetectedState = "TWO FINGERS (SCROLL & TAB MODE)"
             isDippingOrPinching = false
+            hoverProgress = 0f
+            isHoverTriggered = false
+            hoverStartTime = now
             val currX = (indexTip.x() + middleTip.x()) / 2f
             val currY = (indexTip.y() + middleTip.y()) / 2f
 
@@ -324,6 +347,10 @@ class HandGestureDetector(
 
         if (isDipping) {
             lastDetectedState = if (isPinched) "PINCHING THUMB+INDEX" else "INDEX DIPPING"
+            hoverProgress = 0f
+            isHoverTriggered = false
+            hoverStartTime = now
+            hoverCooldownUntil = now + 1000L
             if (clickAnchorPos == null) {
                 clickAnchorPos = Pair(currentPointerX, currentPointerY)
             }
@@ -334,18 +361,68 @@ class HandGestureDetector(
         } else {
             if (tapState == "DIPPED") {
                 val dipDur = now - tapStartTime
-                if (dipDur in 40..550 && (now - lastGestureTime > 300)) {
+                if (dipDur in 40..550 && (now - lastGestureTime > 220)) {
                     val targetPos = clickAnchorPos ?: Pair(currentPointerX, currentPointerY)
                     lastGestureTime = now
                     tapState = "IDLE"
                     clickAnchorPos = null
-                    lastDetectedState = "ACTION: AIR-TAP (${targetPos.first.toInt()}, ${targetPos.second.toInt()})"
-                    return GestureAction.Tap(targetPos.first, targetPos.second)
+
+                    hoverStartTime = now
+                    isHoverTriggered = false
+                    hoverProgress = 0f
+                    hoverCooldownUntil = now + 1100L
+
+                    // Check for Double-Tap
+                    val prevTapPos = lastTapPos
+                    val dtSinceLastTap = now - lastTapReleaseTime
+                    lastTapReleaseTime = now
+                    lastTapPos = targetPos
+
+                    if (dtSinceLastTap < 380L && prevTapPos != null &&
+                        hypot(targetPos.first - prevTapPos.first, targetPos.second - prevTapPos.second) < 55f) {
+                        lastTapReleaseTime = 0L // reset so 3rd tap doesn't double-tap again
+                        lastDetectedState = "ACTION: DOUBLE-TAP [LIKE / ZOOM] (${targetPos.first.toInt()}, ${targetPos.second.toInt()})"
+                        return GestureAction.DoubleTap(targetPos.first, targetPos.second)
+                    } else {
+                        lastDetectedState = "ACTION: AIR-TAP (${targetPos.first.toInt()}, ${targetPos.second.toInt()})"
+                        return GestureAction.Tap(targetPos.first, targetPos.second)
+                    }
                 }
                 tapState = "IDLE"
                 clickAnchorPos = null
             } else {
-                lastDetectedState = "AIMING (TRACKING 5/5 FINGERS)"
+                // ---------------------------------------------------------
+                // Hover-to-Open (Dwell Auto-Click after 0.85s stillness)
+                // ---------------------------------------------------------
+                val drift = hypot(currentPointerX - hoverAnchorX, currentPointerY - hoverAnchorY)
+                if (drift < 30f) {
+                    if (now > hoverCooldownUntil) {
+                        val elapsed = now - hoverStartTime
+                        hoverProgress = (elapsed / 850f).coerceIn(0f, 1f)
+                        if (elapsed >= 850L && !isHoverTriggered) {
+                            isHoverTriggered = true
+                            hoverCooldownUntil = now + 1200L
+                            hoverProgress = 0f
+                            lastGestureTime = now
+                            lastDetectedState = "ACTION: HOVER-CLICK [AUTO-OPEN] (${hoverAnchorX.toInt()}, ${hoverAnchorY.toInt()})"
+                            return GestureAction.Tap(hoverAnchorX, hoverAnchorY)
+                        } else if (elapsed > 200L) {
+                            val pct = (hoverProgress * 100).toInt()
+                            lastDetectedState = "HOVERING TO OPEN ($pct%)"
+                        } else {
+                            lastDetectedState = "AIMING (TOUCH PUCK)"
+                        }
+                    } else {
+                        lastDetectedState = "AIMING (TOUCH PUCK)"
+                    }
+                } else {
+                    hoverAnchorX = currentPointerX
+                    hoverAnchorY = currentPointerY
+                    hoverStartTime = now
+                    isHoverTriggered = false
+                    hoverProgress = 0f
+                    lastDetectedState = "AIMING (TOUCH PUCK)"
+                }
             }
         }
 

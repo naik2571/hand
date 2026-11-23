@@ -170,7 +170,8 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
             val action = gestureDetector?.processLandmarks(primaryHand)
             val gd = gestureDetector
             if (gd != null) {
-                updateCursorPosition(gd.currentPointerX, gd.currentPointerY, gd.isDippingOrPinching, isVisible = true)
+                val isPuckActive = gd.isDippingOrPinching || gd.hoverProgress > 0.30f
+                updateCursorPosition(gd.currentPointerX, gd.currentPointerY, isPuckActive, isVisible = true)
             }
             action?.let { executeGesture(it) }
         } else {
@@ -219,6 +220,20 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
                 }
                 val stroke = GestureDescription.StrokeDescription(path, 0, 80)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
+                dispatchGesture(gesture, null, null)
+            }
+            is GestureAction.DoubleTap -> {
+                Log.d(TAG, "Dispatching DoubleTap at (${action.x}, ${action.y})")
+                val path = Path().apply {
+                    moveTo(action.x, action.y)
+                    lineTo(action.x + 1f, action.y + 1f)
+                }
+                val stroke1 = GestureDescription.StrokeDescription(path, 0, 50)
+                val stroke2 = GestureDescription.StrokeDescription(path, 110, 50)
+                val gesture = GestureDescription.Builder()
+                    .addStroke(stroke1)
+                    .addStroke(stroke2)
+                    .build()
                 dispatchGesture(gesture, null, null)
             }
             is GestureAction.Swipe -> {

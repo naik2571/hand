@@ -173,6 +173,15 @@ class AirController:
         # Status HUD
         self.hud_status = "READY"
 
+        # Android 3-Tier Touch System (Hover, Instant Tap, Double Tap)
+        self.last_adb_tap_release_time = 0.0
+        self.last_adb_tap_pos = None
+        self.hover_anchor_x = 0
+        self.hover_anchor_y = 0
+        self.hover_start_time = 0.0
+        self.is_hover_triggered = False
+        self.hover_cooldown_until = 0.0
+
     def _adb_worker(self):
         """Dedicated background worker so ADB commands never block the video feed."""
         while self.adb_worker_running:
@@ -590,23 +599,63 @@ class AirController:
                 self.last_two_finger_y = None
                 self.is_scroll_armed = True
 
-                # Feature: Air-Tap (Phone Touch)
+                # Feature: Android 3-Tier Touch (Instant Tap, Double Tap & Hover-to-Open)
                 if is_left_click:
                     if self.tap_state == "IDLE":
                         self.tap_state = "DIPPED"
                         self.tap_start_time = now
                         self.click_anchor_pos = (filtered_x, filtered_y)
+                    self.hover_start_time = now
+                    self.is_hover_triggered = False
+                    self.hover_cooldown_until = now + 1.10
                 else:
                     if self.tap_state == "DIPPED":
                         dip_duration = now - self.tap_start_time
-                        if dip_duration < 0.50 and (now - self.last_adb_gesture_time > 0.25):
+                        if dip_duration < 0.50 and (now - self.last_adb_gesture_time > 0.22):
                             tap_x = self.click_anchor_pos[0] if self.click_anchor_pos else filtered_x
                             tap_y = self.click_anchor_pos[1] if self.click_anchor_pos else filtered_y
-                            self.adb_queue.put(("tap", [tap_x, tap_y]))
-                            self.hud_status = f"ANDROID: AIR-TAP ({tap_x}, {tap_y})"
+
+                            dt_since_last_tap = now - self.last_adb_tap_release_time
+                            self.last_adb_tap_release_time = now
+
+                            if dt_since_last_tap < 0.38 and self.last_adb_tap_pos is not None and \
+                               math.hypot(tap_x - self.last_adb_tap_pos[0], tap_y - self.last_adb_tap_pos[1]) < 60:
+                                self.last_adb_tap_release_time = 0.0
+                                # Send two rapid taps for like / zoom
+                                self.adb_queue.put(("tap", [tap_x, tap_y]))
+                                self.adb_queue.put(("tap", [tap_x, tap_y]))
+                                self.hud_status = f"ANDROID: DOUBLE-TAP [LIKE / ZOOM] ({tap_x}, {tap_y})"
+                            else:
+                                self.last_adb_tap_pos = (tap_x, tap_y)
+                                self.adb_queue.put(("tap", [tap_x, tap_y]))
+                                self.hud_status = f"ANDROID: AIR-TAP ({tap_x}, {tap_y})"
+
                             self.last_adb_gesture_time = now
+                            self.hover_start_time = now
+                            self.is_hover_triggered = False
+                            self.hover_cooldown_until = now + 1.10
                         self.tap_state = "IDLE"
                         self.click_anchor_pos = None
+                    else:
+                        # Hover-to-Open (Dwell Auto-Click after 0.85s stillness)
+                        drift = math.hypot(filtered_x - self.hover_anchor_x, filtered_y - self.hover_anchor_y)
+                        if drift < 35:
+                            if now > self.hover_cooldown_until:
+                                elapsed = now - self.hover_start_time
+                                if elapsed >= 0.85 and not self.is_hover_triggered:
+                                    self.is_hover_triggered = True
+                                    self.hover_cooldown_until = now + 1.20
+                                    self.adb_queue.put(("tap", [int(self.hover_anchor_x), int(self.hover_anchor_y)]))
+                                    self.hud_status = f"ANDROID: HOVER-CLICK [AUTO-OPEN] ({int(self.hover_anchor_x)}, {int(self.hover_anchor_y)})"
+                                    self.last_adb_gesture_time = now
+                                elif elapsed > 0.20:
+                                    pct = int(min(1.0, elapsed / 0.85) * 100)
+                                    self.hud_status = f"ANDROID: HOVERING TO OPEN ({pct}%)"
+                        else:
+                            self.hover_anchor_x = filtered_x
+                            self.hover_anchor_y = filtered_y
+                            self.hover_start_time = now
+                            self.is_hover_triggered = False
 
             self.last_cursor_pos = (filtered_x, filtered_y)
             self._render_hud(frame, coords=(filtered_x, filtered_y))

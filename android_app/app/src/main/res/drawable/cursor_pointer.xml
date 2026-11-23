@@ -1,24 +1,24 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="36dp"
-    android:height="36dp"
-    android:viewportWidth="36"
-    android:viewportHeight="36">
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="28"
+    android:viewportHeight="28">
 
-    <!-- Outer Glow Ring -->
+    <!-- Soft drop shadow -->
     <path
-        android:strokeColor="#00E5FF"
-        android:strokeWidth="2.5"
-        android:pathData="M18,6 A12,12 0 1,0 18,30 A12,12 0 1,0 18,6 Z"/>
+        android:fillColor="#33000000"
+        android:pathData="M14,4 A10,10 0 1,0 14,24 A10,10 0 1,0 14,4 Z"/>
 
-    <!-- Crosshair ticks -->
+    <!-- Frosted translucent puck body -->
     <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="2"
-        android:pathData="M18,2 L18,7 M18,29 L18,34 M2,18 L7,18 M29,18 L34,18"/>
+        android:fillColor="#4DFFFFFF"
+        android:strokeColor="#B3FFFFFF"
+        android:strokeWidth="1.5"
+        android:pathData="M14,4.5 A9.5,9.5 0 1,0 14,23.5 A9.5,9.5 0 1,0 14,4.5 Z"/>
 
-    <!-- Center Laser Dot -->
+    <!-- Crisp solid white center focal dot -->
     <path
-        android:fillColor="#00FF66"
-        android:pathData="M18,14 A4,4 0 1,0 18,22 A4,4 0 1,0 18,14 Z"/>
+        android:fillColor="#FFFFFF"
+        android:pathData="M14,12 A2,2 0 1,0 14,16 A2,2 0 1,0 14,12 Z"/>
 
 </vector>

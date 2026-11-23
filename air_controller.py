@@ -810,15 +810,24 @@ class AirController:
         cv2.circle(frame, (tx, ty), 9, (255, 255, 255), 1, cv2.LINE_AA)
         cv2.putText(frame, "THUMB", (tx + 10, ty + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 220, 120), 1, cv2.LINE_AA)
 
-        # Index (Landmark 8) - Active Laser Reticle (Aiming / Pointer)
-        reticle_color = (0, 0, 255) if self.has_dragged else ((0, 255, 255) if (is_left or self.is_left_down) else (0, 255, 0))
-        cv2.circle(frame, (ix, iy), 6, reticle_color, -1, cv2.LINE_AA)
-        cv2.circle(frame, (ix, iy), 14, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.line(frame, (ix - 20, iy), (ix - 8, iy), (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.line(frame, (ix + 8, iy), (ix + 20, iy), (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.line(frame, (ix, iy - 20), (ix, iy - 8), (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.line(frame, (ix, iy + 8), (ix, iy + 20), (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(frame, "INDEX [AIM]", (ix + 16, iy - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.38, reticle_color, 1, cv2.LINE_AA)
+        # Index (Landmark 8) - Touch Puck Pointer (Option 1)
+        if self.has_dragged:
+            puck_color = (80, 80, 240)    # Soft red
+            core_color = (255, 255, 255)
+            r_outer, r_core = 11, 4
+        elif is_left or self.is_left_down:
+            puck_color = (240, 140, 100)  # Soft indigo/accent
+            core_color = (255, 255, 255)
+            r_outer, r_core = 10, 4
+        else:
+            puck_color = (220, 220, 220)  # Clean frosted white
+            core_color = (255, 255, 255)
+            r_outer, r_core = 13, 3
+
+        cv2.circle(frame, (ix, iy), r_outer, (50, 50, 50), 2, cv2.LINE_AA)
+        cv2.circle(frame, (ix, iy), r_outer - 1, puck_color, 2, cv2.LINE_AA)
+        cv2.circle(frame, (ix, iy), r_core, core_color, -1, cv2.LINE_AA)
+        cv2.putText(frame, "INDEX", (ix + 16, iy - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (240, 240, 240), 1, cv2.LINE_AA)
 
         # Middle (Landmark 12) - Sky Blue / Magenta
         m_color = (255, 0, 255) if (is_right or pinch_r < 0.32) else (255, 180, 50)

@@ -103,11 +103,11 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- In-App Floating Laser Pointer Cursor -->
+    <!-- In-App Floating Touch Puck Cursor -->
     <ImageView
         android:id="@+id/in_app_cursor"
-        android:layout_width="36dp"
-        android:layout_height="36dp"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
         android:src="@drawable/cursor_pointer"
         android:visibility="gone"
         android:elevation="20dp" />

@@ -1,24 +1,25 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="36dp"
-    android:height="36dp"
-    android:viewportWidth="36"
-    android:viewportHeight="36">
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="28"
+    android:viewportHeight="28">
 
-    <!-- Active Glow Ring -->
+    <!-- Soft outer accent ring (Feedback wave) -->
     <path
-        android:strokeColor="#FACC15"
-        android:strokeWidth="3.5"
-        android:pathData="M18,5 A13,13 0 1,0 18,31 A13,13 0 1,0 18,5 Z"/>
+        android:strokeColor="#66818CF8"
+        android:strokeWidth="1.2"
+        android:pathData="M14,2.5 A11.5,11.5 0 1,0 14,25.5 A11.5,11.5 0 1,0 14,2.5 Z"/>
 
-    <!-- Crosshairs -->
+    <!-- Contracted puck body with subtle indigo accent -->
     <path
-        android:strokeColor="#FF3B30"
-        android:strokeWidth="2.5"
-        android:pathData="M18,1 L18,7 M18,29 L18,35 M1,18 L7,18 M29,18 L35,18"/>
+        android:fillColor="#806366F1"
+        android:strokeColor="#C7D2FE"
+        android:strokeWidth="1.8"
+        android:pathData="M14,6 A8,8 0 1,0 14,22 A8,8 0 1,0 14,6 Z"/>
 
-    <!-- Center Tap Dot -->
+    <!-- Crisp white center focal dot -->
     <path
-        android:fillColor="#FF3B30"
-        android:pathData="M18,13 A5,5 0 1,0 18,23 A5,5 0 1,0 18,13 Z"/>
+        android:fillColor="#FFFFFF"
+        android:pathData="M14,11.5 A2.5,2.5 0 1,0 14,16.5 A2.5,2.5 0 1,0 14,11.5 Z"/>
 
 </vector>

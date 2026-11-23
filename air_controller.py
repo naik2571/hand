@@ -436,9 +436,10 @@ class AirController:
 
                 # Feature: Index Air-Tap (Phone Touch)
                 index_dip = (index_pip.y - index_tip.y) / hand_scale
-                is_dipping = index_dip < 0.08
+                pinch_dist = self._euclidean(thumb_tip, index_tip) / hand_scale
+                is_dipping = (index_dip < 0.10) or (pinch_dist < 0.28)
 
-                if is_pointing_pose and is_dipping:
+                if is_dipping:
                     if self.tap_state == "IDLE":
                         self.tap_state = "DIPPED"
                         self.tap_start_time = now
@@ -465,8 +466,9 @@ class AirController:
 
         # -------------------------------------------------------------
         # GESTURE: Air Clutch (Resting Hand / Arm Repositioning)
+        # Only engages on explicit Closed Fist or Wide Open Palm
         # -------------------------------------------------------------
-        if is_fist or is_open_palm or (not is_pointing_pose and not is_two_finger_pose):
+        if is_fist or is_open_palm:
             if self.is_dragging:
                 user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
                 self.is_dragging = False
@@ -486,7 +488,7 @@ class AirController:
             # Check for simultaneous downward tap of index and middle
             index_dip = (index_pip.y - index_tip.y) / hand_scale
             middle_dip = (pts[10].y - middle_tip.y) / hand_scale
-            two_finger_dipping = (index_dip < 0.08) and (middle_dip < 0.08)
+            two_finger_dipping = (index_dip < 0.10) and (middle_dip < 0.10)
 
             if two_finger_dipping:
                 if not self.two_finger_dipped:
@@ -495,7 +497,7 @@ class AirController:
             else:
                 if self.two_finger_dipped:
                     dip_dur = now - self.two_finger_dip_start
-                    if dip_dur < 0.28 and (now - self.last_right_click_time > 0.45):
+                    if dip_dur < 0.30 and (now - self.last_right_click_time > 0.40):
                         # Fires Right Click (Context Menu)
                         user32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
                         user32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
@@ -511,7 +513,7 @@ class AirController:
                 self.last_scroll_time = now
             else:
                 dy = curr_y - self.last_scroll_y
-                if abs(dy) > 0.015 and not self.two_finger_dipped:
+                if abs(dy) > 0.012 and not self.two_finger_dipped:
                     scroll_amount = int(-dy * 900)
                     user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, scroll_amount, 0)
                     self.last_scroll_y = curr_y
@@ -527,12 +529,13 @@ class AirController:
 
         # -------------------------------------------------------------
         # GESTURE: Pointing Pose (Precision Aiming & Air-Tap Left Click)
+        # Dual-trigger: Downward dip OR thumb-index pinch
         # -------------------------------------------------------------
-        # Vertical dip metric: distance between knuckle (pip) and tip
         index_dip = (index_pip.y - index_tip.y) / hand_scale
-        is_dipping = index_dip < 0.08
+        pinch_dist = self._euclidean(thumb_tip, index_tip) / hand_scale
+        is_dipping = (index_dip < 0.10) or (pinch_dist < 0.28)
 
-        # Anti-Shake Anchor on Dip
+        # Anti-Shake Anchor on Dip / Pinch
         if is_dipping:
             if self.click_anchor_pos is None and not self.is_dragging:
                 self.click_anchor_pos = (filtered_x, filtered_y)

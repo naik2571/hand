@@ -3,13 +3,13 @@
   Module 3: air_harp.py (Interactive Virtual Air-String Synth)
 =============================================================================
 Interactive musical instrument that allows users to draw strings in mid-air
-and pluck them with their fingertips to trigger real-time sound and spark visuals.
-- Spatial String Drawing: Single or dual hand pinch to stretch and lock strings
-- Physical Pluck Detection: 2D line segment intersection of moving fingertips
-- Real-time Audio Synth: NumPy Karplus-Strong plucked string acoustic simulation
+and pluck them with their fingertips to trigger real-time acoustic sound and spark visuals.
+- Spatial String Drawing: Pinch thumb and index to stretch and lock strings in air
+- Full 5-Finger Plucking: Strum with any or all fingertips (Thumb, Index, Middle, Ring, Pinky)
+- Real-time Stereo Audio Synth: Karplus-Strong physical string acoustic simulation
 - Damped Wave Physics: Strings visually vibrate with realistic damping
-- Spark Visuals: Vector spark particle pool capped to 120 particles
-- Zero CPU contention via non-blocking sounddevice callback thread
+- Spark Visuals: Vector spark particle pool capped to 130 particles
+- Low-latency stereo output (< 20 ms) via sounddevice callback thread
 =============================================================================
 """
 
@@ -53,17 +53,17 @@ def find_intersection_pt(A, B, C, D):
 
 class PluckedVoice:
     """Karplus-Strong Plucked String Voice Synthesis."""
-    def __init__(self, freq, sample_rate=SAMPLE_RATE, decay=0.985):
+    def __init__(self, freq, sample_rate=SAMPLE_RATE, decay=0.988):
         self.freq = max(60.0, min(1200.0, freq))
         self.sample_rate = sample_rate
         self.decay = decay
         self.N = max(2, int(sample_rate / self.freq))
-        # Initial noise burst
-        self.buffer = np.random.uniform(-0.9, 0.9, self.N).astype(np.float32)
+        # Initial rich noise burst
+        self.buffer = np.random.uniform(-0.95, 0.95, self.N).astype(np.float32)
         self.head = 0
         self.is_active = True
         self.samples_played = 0
-        self.max_samples = int(sample_rate * 2.0)  # Max ring time 2s
+        self.max_samples = int(sample_rate * 2.2)  # Ring time ~2.2s
 
     def process(self, num_samples):
         out = np.zeros(num_samples, dtype=np.float32)
@@ -118,7 +118,6 @@ class AirString:
         
         # Map length to musical pitch: Shorter string = higher note
         norm_len = max(0.05, min(1.0, self.length / screen_diag))
-        # Inverse mapping into pentatonic scale indices
         scale_idx = int((1.0 - norm_len) * (len(PENTATONIC_SCALE) - 1))
         self.freq = PENTATONIC_SCALE[scale_idx]
 
@@ -133,9 +132,13 @@ class AirString:
         self.color = (int(color_bgr[0]), int(color_bgr[1]), int(color_bgr[2]))
 
     def pluck(self):
-        self.vibe_amp = 14.0
+        now = time.time()
+        # Cooldown per string to prevent stuttering re-triggers
+        if now - self.last_pluck_time < 0.07:
+            return None
+        self.vibe_amp = 16.0
         self.vibe_phase = 0.0
-        self.last_pluck_time = time.time()
+        self.last_pluck_time = now
         return self.freq
 
     def update(self):
@@ -149,7 +152,6 @@ class AirString:
             # Draw curved vibrating string
             mid_x = (p1[0] + p2[0]) / 2.0
             mid_y = (p1[1] + p2[1]) / 2.0
-            # Normal perpendicular vector
             dx = p2[0] - p1[0]
             dy = p2[1] - p1[1]
             L = math.hypot(dx, dy)
@@ -196,18 +198,19 @@ class AirHarp:
         # Drawing state
         self.drawing_in_progress = False
         self.anchor_p1 = None
-        self.prev_finger_pos = {}  # hand_idx -> (x, y)
+        self.prev_finger_pos = {}  # (hand_idx, tip_idx) -> (x, y)
         self.hud_status = "READY"
 
     def _audio_callback(self, outdata, frames, time_info, status):
-        """Asynchronous audio output callback. Runs on dedicated audio thread."""
+        """Asynchronous stereo audio output callback. Runs on dedicated audio thread."""
         out = np.zeros(frames, dtype=np.float32)
-        
+
         # Check for new notes
         while not self.note_queue.empty():
             try:
                 freq = self.note_queue.get_nowait()
-                self.active_voices.append(PluckedVoice(freq))
+                if freq is not None:
+                    self.active_voices.append(PluckedVoice(freq))
             except queue.Empty:
                 break
 
@@ -221,8 +224,9 @@ class AirHarp:
         self.active_voices = alive_voices
 
         # Soft limiter / clip guard
-        out = np.clip(out * 0.7, -1.0, 1.0)
-        outdata[:] = out.reshape(-1, 1)
+        out = np.clip(out * 0.90, -1.0, 1.0)
+        outdata[:, 0] = out
+        outdata[:, 1] = out
 
     def on_enter(self):
         """Lifecycle hook: Starts sounddevice stream and resets state."""
@@ -233,29 +237,59 @@ class AirHarp:
         self.anchor_p1 = None
         self.prev_finger_pos.clear()
 
-        # Start non-blocking low-latency audio stream
+        # Start non-blocking low-latency stereo audio stream
         try:
             self.audio_stream = sd.OutputStream(
                 samplerate=SAMPLE_RATE,
-                channels=1,
+                channels=2,
                 blocksize=BLOCK_SIZE,
                 callback=self._audio_callback
             )
             self.audio_stream.start()
-            print("[AirHarp] Audio stream started at 44.1 kHz (< 20 ms latency).")
+            print("[AirHarp] Stereo audio stream started at 44.1 kHz (< 20 ms latency).")
         except Exception as e:
-            print(f"[AirHarp] Audio output warning: {e}")
+            print(f"[AirHarp] Stereo stream failed, falling back to mono: {e}")
+            try:
+                self.audio_stream = sd.OutputStream(
+                    samplerate=SAMPLE_RATE,
+                    channels=1,
+                    blocksize=BLOCK_SIZE,
+                    callback=self._audio_callback_mono
+                )
+                self.audio_stream.start()
+                print("[AirHarp] Mono fallback audio stream started.")
+            except Exception as e2:
+                print(f"[AirHarp] Audio initialization warning: {e2}")
 
-        # Add 3 default initial strings to play right away
+        # Add 5 default vertical strings across the screen to strum immediately
         self._seed_default_strings()
         self.hud_status = "ACTIVE - AIR HARP"
 
+    def _audio_callback_mono(self, outdata, frames, time_info, status):
+        """Fallback callback for mono audio devices."""
+        out = np.zeros(frames, dtype=np.float32)
+        while not self.note_queue.empty():
+            try:
+                freq = self.note_queue.get_nowait()
+                if freq is not None:
+                    self.active_voices.append(PluckedVoice(freq))
+            except queue.Empty:
+                break
+        alive_voices = []
+        for voice in self.active_voices:
+            if voice.is_active:
+                out += voice.process(frames)
+                if voice.is_active:
+                    alive_voices.append(voice)
+        self.active_voices = alive_voices
+        out = np.clip(out * 0.90, -1.0, 1.0)
+        outdata[:] = out.reshape(-1, 1)
+
     def _seed_default_strings(self):
-        """Creates 4 default vertical strings across the screen to play immediately."""
-        self.strings.append(AirString((140, 90), (140, 390), self.screen_diag))
-        self.strings.append(AirString((260, 90), (260, 390), self.screen_diag))
-        self.strings.append(AirString((380, 90), (380, 390), self.screen_diag))
-        self.strings.append(AirString((500, 90), (500, 390), self.screen_diag))
+        """Creates 5 default vertical strings across the screen for immediate strumming."""
+        xs = [120, 220, 320, 420, 520]
+        for x in xs:
+            self.strings.append(AirString((x, 50), (x, 430), self.screen_diag))
 
     def on_exit(self):
         """Lifecycle hook: Stops audio stream and cleans up memory."""
@@ -271,30 +305,23 @@ class AirHarp:
         self.active_voices.clear()
         print("[AirHarp] Audio stream closed and buffers cleared.")
 
-    def _euclidean(self, p1, p2):
-        return math.hypot(p1.x - p2.x, p1.y - p2.y)
-
     def update(self, frame, landmarks_list):
         """
         Process a single video frame:
-        - Draw live strings & particles
-        - Check finger crossings to trigger plucking
-        - Support pinch-and-drag to spawn new strings
+        - Draw live strings & spark particles
+        - Check finger crossings to trigger plucking across ALL 5 fingertips
+        - Support pinch-and-drag to stretch & spawn new strings
         """
         h, w, _ = frame.shape
         self.screen_diag = math.hypot(w, h)
         now = time.time()
 
-        # -------------------------------------------------------------
-        # 1. Update & Draw Existing Strings
-        # -------------------------------------------------------------
+        # 1. Update & Draw Strings
         for s in self.strings:
             s.update()
             s.draw(frame)
 
-        # -------------------------------------------------------------
         # 2. Update & Draw Particles (Sparks)
-        # -------------------------------------------------------------
         self.particles = [p for p in self.particles if p.update()]
         for p in self.particles:
             p.draw(frame)
@@ -304,74 +331,77 @@ class AirHarp:
             self._render_hud(frame)
             return frame
 
-        # -------------------------------------------------------------
-        # 3. Finger Tracking & Pluck Detection
-        # -------------------------------------------------------------
-        active_hands_tips = []
+        # 3. Finger Tracking & Pluck Detection across all 5 fingertips:
+        # Thumb (4), Index (8), Middle (12), Ring (16), Pinky (20)
+        FINGER_TIPS = [4, 8, 12, 16, 20]
 
         for hand_idx, hand in enumerate(landmarks_list):
             pts = hand.landmark if hasattr(hand, 'landmark') else hand
-            # Coordinates align with the mirrored preview frame
-            curr_x = int(pts[8].x * w)
-            curr_y = int(pts[8].y * h)
-            active_hands_tips.append((curr_x, curr_y))
 
-            # Thumb tip for pinch detection
-            thumb_x = int(pts[4].x * w)
-            thumb_y = int(pts[4].y * h)
-            pinch_dist = math.hypot(curr_x - thumb_x, curr_y - thumb_y)
-            is_pinching = pinch_dist < 40
+            # Pinch detection (Index tip 8 & Thumb tip 4)
+            ix = int(pts[8].x * w)
+            iy = int(pts[8].y * h)
+            tx = int(pts[4].x * w)
+            ty = int(pts[4].y * h)
+            pinch_dist = math.hypot(ix - tx, iy - ty)
+            is_pinching = pinch_dist < 42
 
-            # Visual pointer dot
-            cv2.circle(frame, (curr_x, curr_y), 7, (255, 255, 255), -1, cv2.LINE_AA)
-            cv2.circle(frame, (curr_x, curr_y), 10, (0, 255, 255), 1, cv2.LINE_AA)
+            # Check plucking for every fingertip
+            for tip_idx in FINGER_TIPS:
+                fx = int(pts[tip_idx].x * w)
+                fy = int(pts[tip_idx].y * h)
+                f_key = (hand_idx, tip_idx)
 
-            # Pluck check if previous position exists and not currently anchoring
-            if hand_idx in self.prev_finger_pos and not is_pinching:
-                prev_x, prev_y = self.prev_finger_pos[hand_idx]
-                finger_seg = ((prev_x, prev_y), (curr_x, curr_y))
+                # Visual pointer dots for each fingertip
+                cv2.circle(frame, (fx, fy), 5, (255, 255, 255), -1, cv2.LINE_AA)
+                cv2.circle(frame, (fx, fy), 8, (0, 255, 255), 1, cv2.LINE_AA)
 
-                for s in self.strings:
-                    if line_intersect(finger_seg[0], finger_seg[1], s.p1, s.p2):
-                        # Finger crossed string -> PLUCK!
-                        freq = s.pluck()
-                        self.note_queue.put(freq)
-                        
-                        # Spawn localized spark particles at intersection
-                        ix, iy = find_intersection_pt(finger_seg[0], finger_seg[1], s.p1, s.p2)
-                        for _ in range(12):
-                            if len(self.particles) < self.max_particles:
-                                self.particles.append(SparkParticle(ix, iy, s.color))
-                        self.hud_status = f"PLUCKED: {int(freq)} Hz"
+                # If pinching to draw a string, don't pluck with index or thumb
+                if is_pinching and tip_idx in (4, 8):
+                    continue
 
-            self.prev_finger_pos[hand_idx] = (curr_x, curr_y)
+                if f_key in self.prev_finger_pos:
+                    prev_x, prev_y = self.prev_finger_pos[f_key]
+                    finger_seg = ((prev_x, prev_y), (fx, fy))
 
-            # -------------------------------------------------------------
+                    for s in self.strings:
+                        if line_intersect(finger_seg[0], finger_seg[1], s.p1, s.p2):
+                            freq = s.pluck()
+                            if freq is not None:
+                                self.note_queue.put(freq)
+                                ix_pt, iy_pt = find_intersection_pt(finger_seg[0], finger_seg[1], s.p1, s.p2)
+                                for _ in range(10):
+                                    if len(self.particles) < self.max_particles:
+                                        self.particles.append(SparkParticle(ix_pt, iy_pt, s.color))
+                                self.hud_status = f"STRUMMED: {int(freq)} Hz"
+
+                self.prev_finger_pos[f_key] = (fx, fy)
+
             # 4. Spatial String Creation (Pinch & Drag)
-            # -------------------------------------------------------------
             if is_pinching:
                 if not self.drawing_in_progress:
                     # Anchor Point 1
-                    self.anchor_p1 = (curr_x, curr_y)
+                    self.anchor_p1 = (ix, iy)
                     self.drawing_in_progress = True
                     self.hud_status = "DRAWING STRING (STRETCH IN AIR)..."
                 else:
                     # Preview rubber-band string
-                    cv2.line(frame, self.anchor_p1, (curr_x, curr_y), (0, 255, 255), 2, cv2.LINE_AA)
-                    cv2.circle(frame, self.anchor_p1, 5, (0, 255, 0), -1)
-                    cv2.circle(frame, (curr_x, curr_y), 5, (0, 255, 0), -1)
+                    cv2.line(frame, self.anchor_p1, (ix, iy), (0, 255, 255), 2, cv2.LINE_AA)
+                    cv2.circle(frame, self.anchor_p1, 6, (0, 255, 0), -1)
+                    cv2.circle(frame, (ix, iy), 6, (0, 255, 0), -1)
             else:
                 if self.drawing_in_progress and self.anchor_p1 is not None:
                     # Pinch released -> Lock string in space!
-                    drag_dist = math.hypot(curr_x - self.anchor_p1[0], curr_y - self.anchor_p1[1])
-                    if drag_dist > 40:  # Minimum length threshold
+                    drag_dist = math.hypot(ix - self.anchor_p1[0], iy - self.anchor_p1[1])
+                    if drag_dist > 35:  # Minimum length threshold
                         if len(self.strings) >= self.max_strings:
                             self.strings.pop(0)  # Evict oldest string
-                        new_string = AirString(self.anchor_p1, (curr_x, curr_y), self.screen_diag)
+                        new_string = AirString(self.anchor_p1, (ix, iy), self.screen_diag)
                         self.strings.append(new_string)
                         # Pluck newly drawn string upon release
                         freq = new_string.pluck()
-                        self.note_queue.put(freq)
+                        if freq is not None:
+                            self.note_queue.put(freq)
                         self.hud_status = f"STRING CREATED ({int(freq)} Hz)"
                     self.drawing_in_progress = False
                     self.anchor_p1 = None
@@ -386,9 +416,9 @@ class AirHarp:
 
     def _render_hud(self, frame):
         """Minimal HUD on the OpenCV window."""
-        cv2.putText(frame, "MODE: VIRTUAL AIR HARP", (15, 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(frame, "MODE: VIRTUAL AIR HARP [Strum any string with fingertips]", (15, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 2, cv2.LINE_AA)
         cv2.putText(frame, f"STATUS: {self.hud_status}", (15, 52),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(frame, f"STRINGS: {len(self.strings)}/{self.max_strings} (Pinch to Draw | Press 'C' to Clear)",
-                    (15, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 180, 180), 1, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"STRINGS: {len(self.strings)}/{self.max_strings} (Pinch Thumb+Index to Draw | 'C' to Clear)",
+                    (15, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 230, 255), 1, cv2.LINE_AA)

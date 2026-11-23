@@ -108,9 +108,10 @@ class VisionBridge:
         self.camera = None
         self.landmarker = None
         
-        # Thread-safe async results from MediaPipe
+        # Threat-safe async results from MediaPipe
         self.latest_landmarks = []
         self.result_lock = threading.Lock()
+        self.missed_frame_count = 0
 
         # Modules
         self.controller = AirController()
@@ -128,7 +129,7 @@ class VisionBridge:
         self.fist_start_time = 0.0
         self.is_holding_fist = False
         self.mode_switched = False
-        self.hold_duration = 1.5
+        self.hold_duration = 2.0
 
         # Automatic Android Device Discovery
         self.known_android_serials = set()
@@ -204,10 +205,14 @@ class VisionBridge:
     def _on_detection_result(self, result, output_image, timestamp_ms):
         """Asynchronous callback executed by MediaPipe LIVE_STREAM worker."""
         with self.result_lock:
-            if result and result.hand_landmarks:
+            if result and result.hand_landmarks and len(result.hand_landmarks) > 0:
                 self.latest_landmarks = result.hand_landmarks
+                self.missed_frame_count = 0
             else:
-                self.latest_landmarks = []
+                self.missed_frame_count += 1
+                # Grace buffer: keep tracking steady for up to 3 frames of momentary occlusion
+                if self.missed_frame_count > 3:
+                    self.latest_landmarks = []
 
     def _init_vision(self):
         """Initializes the background threaded camera and MediaPipe HandLandmarker."""
@@ -226,12 +231,12 @@ class VisionBridge:
             running_mode=vision.RunningMode.LIVE_STREAM,
             result_callback=self._on_detection_result,
             num_hands=2,
-            min_hand_detection_confidence=0.5,
-            min_hand_presence_confidence=0.5,
-            min_tracking_confidence=0.5
+            min_hand_detection_confidence=0.35,
+            min_hand_presence_confidence=0.35,
+            min_tracking_confidence=0.35
         )
         self.landmarker = vision.HandLandmarker.create_from_options(options)
-        print("[Bridge] MediaPipe HandLandmarker successfully initialized.")
+        print("[Bridge] MediaPipe HandLandmarker successfully initialized (High Sensitivity 0.35).")
 
     def switch_camera(self):
         """Toggle camera source between index 0 (laptop) and index 1 (phone/external)."""

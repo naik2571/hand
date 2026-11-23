@@ -237,6 +237,12 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
             is GestureAction.Home -> {
                 performGlobalAction(GLOBAL_ACTION_HOME)
             }
+            is GestureAction.Recents -> {
+                performGlobalAction(GLOBAL_ACTION_RECENTS)
+            }
+            is GestureAction.Notifications -> {
+                performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+            }
         }
     }
 

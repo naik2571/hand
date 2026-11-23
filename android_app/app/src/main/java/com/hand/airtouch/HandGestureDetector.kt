@@ -9,6 +9,8 @@ sealed class GestureAction {
     data class Swipe(val x1: Float, val y1: Float, val x2: Float, val y2: Float, val durationMs: Long) : GestureAction()
     object Back : GestureAction()
     object Home : GestureAction()
+    object Recents : GestureAction()
+    object Notifications : GestureAction()
 }
 
 class HandGestureDetector(
@@ -113,7 +115,7 @@ class HandGestureDetector(
         }
 
         // -------------------------------------------------------------
-        // 2. Open Palm Global Navigation (Back & Home)
+        // 2. Open Palm Global Navigation (Back, Home, Recents, Notifications)
         // -------------------------------------------------------------
         if (isOpenPalm) {
             lastDetectedState = "OPEN PALM"
@@ -123,10 +125,18 @@ class HandGestureDetector(
                     lastGestureTime = now
                     lastDetectedState = "ACTION: BACK"
                     return GestureAction.Back
+                } else if (indexTip.x() > 0.80f) {
+                    lastGestureTime = now
+                    lastDetectedState = "ACTION: RECENTS (APP SWITCHER)"
+                    return GestureAction.Recents
                 } else if (indexTip.y() < 0.20f) {
                     lastGestureTime = now
                     lastDetectedState = "ACTION: HOME"
                     return GestureAction.Home
+                } else if (indexTip.y() > 0.80f) {
+                    lastGestureTime = now
+                    lastDetectedState = "ACTION: NOTIFICATIONS"
+                    return GestureAction.Notifications
                 }
             }
         }

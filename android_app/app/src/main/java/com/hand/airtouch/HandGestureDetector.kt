@@ -35,8 +35,6 @@ class HandGestureDetector(
 
     private var lastGestureTime = 0L
     private var isScrolling = false
-    private var lastWristX: Float? = null
-    private var lastWristTime = 0L
 
     // Two-finger scroll & tab anti-rebound engine
     private var lastTwoFingerX: Float? = null
@@ -49,6 +47,10 @@ class HandGestureDetector(
     private var lastScrollActionTime: Long = 0L
     private var isScrollArmed: Boolean = true
 
+    // Open Palm Edge Dwell Engine (Prevents transit false-triggers)
+    private var openPalmEdgeHoldStart: Long = 0L
+    private var activeEdgeZone: String? = null
+
     // Anti-shake anchor for air tap
     private var clickAnchorPos: Pair<Float, Float>? = null
     private var tapState = "IDLE"
@@ -57,15 +59,6 @@ class HandGestureDetector(
     // Double-Tap Engine (Instant Like / Zoom)
     private var lastTapReleaseTime: Long = 0L
     private var lastTapPos: Pair<Float, Float>? = null
-
-    // Hover-to-Open (Dwell Auto-Click after 0.85s stillness)
-    private var hoverAnchorX: Float = screenWidth / 2f
-    private var hoverAnchorY: Float = screenHeight / 2f
-    private var hoverStartTime: Long = 0L
-    private var isHoverTriggered: Boolean = false
-    private var hoverCooldownUntil: Long = 0L
-    var hoverProgress: Float = 0f
-        private set
 
     private fun dist(p1: NormalizedLandmark, p2: NormalizedLandmark): Float {
         return hypot(p1.x() - p2.x(), p1.y() - p2.y())
@@ -87,22 +80,31 @@ class HandGestureDetector(
         val indexPip = landmarks[6]
         val indexTip = landmarks[8]
         val middleMcp = landmarks[9]
-        val middlePip = landmarks[10]
         val middleTip = landmarks[12]
+        val ringMcp = landmarks[13]
         val ringTip = landmarks[16]
+        val pinkyMcp = landmarks[17]
         val pinkyTip = landmarks[20]
 
         val handScale = maxOf(0.08f, dist(wrist, middleMcp))
 
-        // Finger extensions relative to wrist and knuckles
-        val indexExtended = dist(indexTip, wrist) > dist(indexPip, wrist) + 0.02f
-        val middleExtended = dist(middleTip, wrist) > dist(middlePip, wrist) + 0.02f
-        val ringExtended = dist(ringTip, wrist) > dist(landmarks[14], wrist) + 0.02f
-        val pinkyExtended = dist(pinkyTip, wrist) > dist(landmarks[18], wrist) + 0.02f
+        // Knuckle-curl ratios relative to MCP base (rotation & perspective invariant)
+        val indexCurl = dist(indexTip, indexMcp) / handScale
+        val middleCurl = dist(middleTip, middleMcp) / handScale
+        val ringCurl = dist(ringTip, ringMcp) / handScale
+        val pinkyCurl = dist(pinkyTip, pinkyMcp) / handScale
+        val thumbCurl = dist(thumbTip, landmarks[2]) / handScale
 
-        val isOpenPalm = indexExtended && middleExtended && ringExtended && pinkyExtended
-        val isTwoFinger = indexExtended && middleExtended && !ringExtended && !pinkyExtended
-        val isFist = !indexExtended && !middleExtended && !ringExtended && !pinkyExtended
+        val indexExtended = indexCurl > 1.0f
+        val middleExtended = middleCurl > 1.0f
+        val ringCurled = ringCurl < 0.85f
+        val pinkyCurled = pinkyCurl < 0.85f
+        val ringExtended = ringCurl > 1.05f
+        val pinkyExtended = pinkyCurl > 1.05f
+
+        val isTwoFinger = indexExtended && middleExtended && ringCurled && pinkyCurled
+        val isOpenPalm = indexExtended && middleExtended && ringExtended && pinkyExtended && (thumbCurl > 0.80f)
+        val isFist = (indexCurl < 0.75f) && (middleCurl < 0.75f) && ringCurled && pinkyCurled
 
         // Active 70% boundary mapping with smoothing for steady pointer control
         val normX = ((indexTip.x() - 0.15f) / 0.70f).coerceIn(0f, 1f)
@@ -129,82 +131,75 @@ class HandGestureDetector(
             lastTwoFingerY = null
             lastScrollDirection = null
             isScrollArmed = true
-            hoverProgress = 0f
-            isHoverTriggered = false
-            hoverStartTime = now
+            activeEdgeZone = null
+            openPalmEdgeHoldStart = 0L
             return null
         }
 
         // -------------------------------------------------------------
-        // 2. Open Palm Global Navigation (Back, Home, Recents, Notifications)
+        // 2. Open Palm Global Navigation (400ms Edge Dwell Hold)
+        // Back, Home, Recents, Notifications
         // -------------------------------------------------------------
         if (isOpenPalm) {
-            lastDetectedState = "OPEN PALM"
             isDippingOrPinching = false
-            hoverProgress = 0f
-            isHoverTriggered = false
-            hoverStartTime = now
-            if (now - lastGestureTime > 800) {
-                if (indexTip.x() < 0.20f) {
-                    lastGestureTime = now
-                    lastDetectedState = "ACTION: BACK"
-                    return GestureAction.Back
-                } else if (indexTip.x() > 0.80f) {
-                    lastGestureTime = now
-                    lastDetectedState = "ACTION: RECENTS (APP SWITCHER)"
-                    return GestureAction.Recents
-                } else if (indexTip.y() < 0.20f) {
-                    lastGestureTime = now
-                    lastDetectedState = "ACTION: HOME"
-                    return GestureAction.Home
-                } else if (indexTip.y() > 0.80f) {
-                    lastGestureTime = now
-                    lastDetectedState = "ACTION: NOTIFICATIONS"
-                    return GestureAction.Notifications
-                }
+            val currentZone = when {
+                indexTip.x() < 0.20f -> "BACK"
+                indexTip.x() > 0.80f -> "RECENTS"
+                indexTip.y() < 0.20f -> "HOME"
+                indexTip.y() > 0.80f -> "NOTIFICATIONS"
+                else -> null
             }
-        }
 
-        // -------------------------------------------------------------
-        // 3. Air Swing (Fast Horizontal Wrist Flick)
-        // -------------------------------------------------------------
-        lastWristX?.let { prevX ->
-            val dt = (now - lastWristTime) / 1000f
-            if (dt > 0.01f) {
-                val vx = (wrist.x() - prevX) / dt
-                if (Math.abs(vx) > 1.2f && (now - lastGestureTime > 600)) {
-                    val midY = screenHeight / 2f
-                    lastGestureTime = now
-                    if (vx > 1.2f) {
-                        lastDetectedState = "ACTION: SWIPE RIGHT"
-                        return GestureAction.Swipe(
-                            screenWidth * 0.2f, midY,
-                            screenWidth * 0.8f, midY,
-                            160
-                        )
+            if (currentZone != null) {
+                if (activeEdgeZone != currentZone) {
+                    activeEdgeZone = currentZone
+                    openPalmEdgeHoldStart = now
+                    lastDetectedState = "OPEN PALM: HOLD FOR $currentZone..."
+                } else {
+                    val holdDuration = now - openPalmEdgeHoldStart
+                    if (holdDuration >= 400L && (now - lastGestureTime > 800L)) {
+                        lastGestureTime = now
+                        activeEdgeZone = null
+                        openPalmEdgeHoldStart = 0L
+                        when (currentZone) {
+                            "BACK" -> {
+                                lastDetectedState = "ACTION: BACK"
+                                return GestureAction.Back
+                            }
+                            "RECENTS" -> {
+                                lastDetectedState = "ACTION: RECENTS (APP SWITCHER)"
+                                return GestureAction.Recents
+                            }
+                            "HOME" -> {
+                                lastDetectedState = "ACTION: HOME"
+                                return GestureAction.Home
+                            }
+                            "NOTIFICATIONS" -> {
+                                lastDetectedState = "ACTION: NOTIFICATIONS"
+                                return GestureAction.Notifications
+                            }
+                        }
                     } else {
-                        lastDetectedState = "ACTION: SWIPE LEFT"
-                        return GestureAction.Swipe(
-                            screenWidth * 0.8f, midY,
-                            screenWidth * 0.2f, midY,
-                            160
-                        )
+                        lastDetectedState = "OPEN PALM: HOLDING FOR $currentZone (${holdDuration}ms)"
                     }
                 }
+            } else {
+                activeEdgeZone = null
+                openPalmEdgeHoldStart = 0L
+                lastDetectedState = "OPEN PALM (CENTER)"
             }
+        } else {
+            activeEdgeZone = null
+            openPalmEdgeHoldStart = 0L
         }
-        lastWristX = wrist.x()
-        lastWristTime = now
 
         // -------------------------------------------------------------
-        // 4. Two-Finger Reels / Shorts & Tab Switching (Option A - Directional Dominance)
+        // 3. Two-Finger Reels / Shorts & Tab Switching (Option A - Directional Dominance)
+        // 2.5s Lockout Anti-Rebound Guard
         // -------------------------------------------------------------
         if (isTwoFinger) {
             lastDetectedState = "TWO FINGERS (SCROLL & TAB MODE)"
             isDippingOrPinching = false
-            hoverProgress = 0f
-            isHoverTriggered = false
-            hoverStartTime = now
             val currX = (indexTip.x() + middleTip.x()) / 2f
             val currY = (indexTip.y() + middleTip.y()) / 2f
 
@@ -229,8 +224,8 @@ class HandGestureDetector(
                     val strokeDuration = now - strokeStartTime
                     val speed = hypot(vx, vy)
 
-                    // Re-arm when hand settles or slows down
-                    if (!isScrollArmed && speed < 0.45f) {
+                    // Re-arm only when hand settles or slows down completely
+                    if (!isScrollArmed && speed < 0.25f) {
                         isScrollArmed = true
                         strokeStartX = currX
                         strokeStartY = currY
@@ -243,13 +238,13 @@ class HandGestureDetector(
                         val absDx = Math.abs(totalDx)
                         val absDy = Math.abs(totalDy)
 
-                        // 1. VERTICAL DOMINANCE (Reels & Shorts): absVy > 1.35 * absVx
-                        if (absVy > 1.35f * absVx && absVy > 1.0f && absDy > 0.06f) {
+                        // 1. VERTICAL DOMINANCE (Reels & Shorts): absVy > 1.35 * absVx, absVy > 1.30, absDy > 0.11
+                        if (absVy > 1.35f * absVx && absVy > 1.30f && absDy > 0.11f) {
                             val cx = screenWidth / 2f
                             if (vy < 0) {
                                 // Flick UP -> NEXT REEL
-                                val isReverseLocked = (lastScrollDirection == "DOWN") && (now - lastScrollActionTime < 1200L)
-                                if (!isReverseLocked && (now - lastGestureTime > 350L)) {
+                                val isReverseLocked = (lastScrollDirection == "DOWN") && (now - lastScrollActionTime < 2500L)
+                                if (!isReverseLocked && (now - lastGestureTime > 400L)) {
                                     lastGestureTime = now
                                     lastScrollActionTime = now
                                     lastScrollDirection = "UP"
@@ -262,8 +257,8 @@ class HandGestureDetector(
                                 }
                             } else {
                                 // Flick DOWN -> PREVIOUS REEL
-                                val isReverseLocked = (lastScrollDirection == "UP") && (now - lastScrollActionTime < 1200L)
-                                if (!isReverseLocked && (now - lastGestureTime > 350L)) {
+                                val isReverseLocked = (lastScrollDirection == "UP") && (now - lastScrollActionTime < 2500L)
+                                if (!isReverseLocked && (now - lastGestureTime > 400L)) {
                                     lastGestureTime = now
                                     lastScrollActionTime = now
                                     lastScrollDirection = "DOWN"
@@ -276,13 +271,13 @@ class HandGestureDetector(
                                 }
                             }
                         }
-                        // 2. HORIZONTAL DOMINANCE (Tabs, Photos & Stories): absVx > 1.35 * absVy
-                        else if (absVx > 1.35f * absVy && absVx > 0.90f && absDx > 0.06f) {
+                        // 2. HORIZONTAL DOMINANCE (Tabs, Photos & Stories): absVx > 1.35 * absVy, absVx > 1.10, absDx > 0.10
+                        else if (absVx > 1.35f * absVy && absVx > 1.10f && absDx > 0.10f) {
                             val midY = screenHeight / 2f
                             if (vx < 0) {
                                 // Push LEFT -> NEXT TAB / STORY (Simulates finger swiping right-to-left)
-                                val isReverseLocked = (lastScrollDirection == "RIGHT") && (now - lastScrollActionTime < 1200L)
-                                if (!isReverseLocked && (now - lastGestureTime > 350L)) {
+                                val isReverseLocked = (lastScrollDirection == "RIGHT") && (now - lastScrollActionTime < 2500L)
+                                if (!isReverseLocked && (now - lastGestureTime > 400L)) {
                                     lastGestureTime = now
                                     lastScrollActionTime = now
                                     lastScrollDirection = "LEFT"
@@ -295,8 +290,8 @@ class HandGestureDetector(
                                 }
                             } else {
                                 // Push RIGHT -> PREV TAB / STORY (Simulates finger swiping left-to-right)
-                                val isReverseLocked = (lastScrollDirection == "LEFT") && (now - lastScrollActionTime < 1200L)
-                                if (!isReverseLocked && (now - lastGestureTime > 350L)) {
+                                val isReverseLocked = (lastScrollDirection == "LEFT") && (now - lastScrollActionTime < 2500L)
+                                if (!isReverseLocked && (now - lastGestureTime > 400L)) {
                                     lastGestureTime = now
                                     lastScrollActionTime = now
                                     lastScrollDirection = "RIGHT"
@@ -333,7 +328,7 @@ class HandGestureDetector(
         }
 
         // -------------------------------------------------------------
-        // 5. Air-Tap Left Click / Phone Touch with Anchor
+        // 4. Air-Tap Left Click / Phone Touch with Anchor
         // Dual trigger: Thumb+Index pinch (<0.34) OR Index dip/flex
         // -------------------------------------------------------------
         val pinchDist = dist(thumbTip, indexTip) / handScale
@@ -347,10 +342,6 @@ class HandGestureDetector(
 
         if (isDipping) {
             lastDetectedState = if (isPinched) "PINCHING THUMB+INDEX" else "INDEX DIPPING"
-            hoverProgress = 0f
-            isHoverTriggered = false
-            hoverStartTime = now
-            hoverCooldownUntil = now + 1000L
             if (clickAnchorPos == null) {
                 clickAnchorPos = Pair(currentPointerX, currentPointerY)
             }
@@ -366,11 +357,6 @@ class HandGestureDetector(
                     lastGestureTime = now
                     tapState = "IDLE"
                     clickAnchorPos = null
-
-                    hoverStartTime = now
-                    isHoverTriggered = false
-                    hoverProgress = 0f
-                    hoverCooldownUntil = now + 1100L
 
                     // Check for Double-Tap
                     val prevTapPos = lastTapPos
@@ -391,38 +377,7 @@ class HandGestureDetector(
                 tapState = "IDLE"
                 clickAnchorPos = null
             } else {
-                // ---------------------------------------------------------
-                // Hover-to-Open (Dwell Auto-Click after 0.85s stillness)
-                // ---------------------------------------------------------
-                val drift = hypot(currentPointerX - hoverAnchorX, currentPointerY - hoverAnchorY)
-                if (drift < 30f) {
-                    if (now > hoverCooldownUntil) {
-                        val elapsed = now - hoverStartTime
-                        hoverProgress = (elapsed / 850f).coerceIn(0f, 1f)
-                        if (elapsed >= 850L && !isHoverTriggered) {
-                            isHoverTriggered = true
-                            hoverCooldownUntil = now + 1200L
-                            hoverProgress = 0f
-                            lastGestureTime = now
-                            lastDetectedState = "ACTION: HOVER-CLICK [AUTO-OPEN] (${hoverAnchorX.toInt()}, ${hoverAnchorY.toInt()})"
-                            return GestureAction.Tap(hoverAnchorX, hoverAnchorY)
-                        } else if (elapsed > 200L) {
-                            val pct = (hoverProgress * 100).toInt()
-                            lastDetectedState = "HOVERING TO OPEN ($pct%)"
-                        } else {
-                            lastDetectedState = "AIMING (TOUCH PUCK)"
-                        }
-                    } else {
-                        lastDetectedState = "AIMING (TOUCH PUCK)"
-                    }
-                } else {
-                    hoverAnchorX = currentPointerX
-                    hoverAnchorY = currentPointerY
-                    hoverStartTime = now
-                    isHoverTriggered = false
-                    hoverProgress = 0f
-                    lastDetectedState = "AIMING (TOUCH PUCK)"
-                }
+                lastDetectedState = "AIMING (TOUCH PUCK)"
             }
         }
 

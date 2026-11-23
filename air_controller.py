@@ -173,14 +173,11 @@ class AirController:
         # Status HUD
         self.hud_status = "READY"
 
-        # Android 3-Tier Touch System (Hover, Instant Tap, Double Tap)
+        # Android Air-Touch System (Instant Tap, Double Tap & Edge Dwell Hold)
         self.last_adb_tap_release_time = 0.0
         self.last_adb_tap_pos = None
-        self.hover_anchor_x = 0
-        self.hover_anchor_y = 0
-        self.hover_start_time = 0.0
-        self.is_hover_triggered = False
-        self.hover_cooldown_until = 0.0
+        self.open_palm_edge_hold_start = 0.0
+        self.active_edge_zone = None
 
     def _adb_worker(self):
         """Dedicated background worker so ADB commands never block the video feed."""
@@ -349,7 +346,9 @@ class AirController:
         middle_mcp = pts[9]
         middle_pip = pts[10]
         middle_tip = pts[12]
+        ring_mcp = pts[13]
         ring_tip = pts[16]
+        pinky_mcp = pts[17]
         pinky_tip = pts[20]
 
         # Normalized scale: Wrist to Middle MCP (Landmark 9)
@@ -357,11 +356,22 @@ class AirController:
         if hand_scale < 0.05:
             hand_scale = 0.20
 
-        # Finger extension states
-        index_extended = self._euclidean(index_tip, wrist) > self._euclidean(index_pip, wrist) + 0.02
-        middle_extended = self._euclidean(middle_tip, wrist) > self._euclidean(middle_pip, wrist) + 0.02
-        ring_extended = self._euclidean(ring_tip, wrist) > self._euclidean(pts[14], wrist) + 0.02
-        pinky_extended = self._euclidean(pinky_tip, wrist) > self._euclidean(pts[18], wrist) + 0.02
+        # Knuckle-curl ratios relative to MCP base (rotation & perspective invariant)
+        index_curl = self._euclidean(index_tip, index_mcp) / hand_scale
+        middle_curl = self._euclidean(middle_tip, middle_mcp) / hand_scale
+        ring_curl = self._euclidean(ring_tip, ring_mcp) / hand_scale
+        pinky_curl = self._euclidean(pinky_tip, pinky_mcp) / hand_scale
+        thumb_curl = self._euclidean(thumb_tip, pts[2]) / hand_scale
+
+        index_extended = index_curl > 1.0
+        middle_extended = middle_curl > 1.0
+        ring_curled = ring_curl < 0.85
+        pinky_curled = pinky_curl < 0.85
+        ring_extended = ring_curl > 1.05
+        pinky_extended = pinky_curl > 1.05
+
+        is_two_finger = index_extended and middle_extended and ring_curled and pinky_curled
+        is_open_palm = index_extended and middle_extended and ring_extended and pinky_extended and (thumb_curl > 0.80)
 
         # Pinch distances (normalized to hand scale)
         pinch_l = self._euclidean(thumb_tip, index_tip) / hand_scale
@@ -375,11 +385,11 @@ class AirController:
 
         # High-reliability gesture classification:
         # 1. Closed Fist: All 4 fingers curled, thumb relaxed
-        is_fist = (not index_extended) and (not middle_extended) and (not ring_extended) and (not pinky_extended) and (pinch_l > 0.35)
+        is_fist = (index_curl < 0.75) and (middle_curl < 0.75) and ring_curled and pinky_curled
 
         # 2. Right Click Trigger: Thumb-Middle pinch (< 0.32) OR Middle finger downward dip / tap
         is_right_pinch = (pinch_r < 0.32) and (pinch_l > 0.25)
-        is_middle_tap = index_extended and ((middle_dip_y < 0.16) or (middle_flex < 0.58)) and (not ring_extended) and (pinch_l > 0.30)
+        is_middle_tap = index_extended and ((middle_dip_y < 0.16) or (middle_flex < 0.58)) and ring_curled and (pinch_l > 0.30)
         is_right_click = (is_right_pinch or is_middle_tap) and (not is_fist)
 
         # 3. Left Click Trigger: Thumb-Index pinch (< 0.34) OR Index finger downward dip / forward tap
@@ -435,53 +445,58 @@ class AirController:
                 self.last_two_finger_y = None
                 self.last_scroll_direction = None
                 self.is_scroll_armed = True
+                self.active_edge_zone = None
+                self.open_palm_edge_hold_start = 0.0
                 self._render_hud(frame, coords=(filtered_x, filtered_y))
                 return frame
 
-            # Feature: Air Swing (Horizontal Flick Left / Right for Tabs/Screens)
-            if self.last_wrist_x is not None:
-                dt_wrist = now - self.last_wrist_time
-                if dt_wrist > 0.01:
-                    vx_wrist = (wrist.x - self.last_wrist_x) / dt_wrist
-                    # Fast horizontal hand flick
-                    if abs(vx_wrist) > 1.2 and (now - self.last_adb_gesture_time > 0.60):
-                        mid_y = self.phone_h // 2
-                        if vx_wrist > 1.2:
-                            x1 = int(self.phone_w * 0.20)
-                            x2 = int(self.phone_w * 0.80)
-                            self.adb_queue.put(("swipe", [x1, mid_y, x2, mid_y, 160]))
-                            self.hud_status = "ANDROID: SWIPE RIGHT [PREV TAB]"
-                        else:
-                            x1 = int(self.phone_w * 0.80)
-                            x2 = int(self.phone_w * 0.20)
-                            self.adb_queue.put(("swipe", [x1, mid_y, x2, mid_y, 160]))
-                            self.hud_status = "ANDROID: SWIPE LEFT [NEXT TAB]"
-                        self.last_adb_gesture_time = now
-            self.last_wrist_x = wrist.x
-            self.last_wrist_time = now
-
-            # Feature: Open Palm 4-Way Global Navigation (Back, Recents, Home, Notifications)
-            is_open_palm = index_extended and middle_extended and ring_extended and pinky_extended
-            if is_open_palm and (now - self.last_adb_gesture_time > 0.80):
-                if index_tip.x < 0.22:
-                    self.adb_queue.put(("keyevent", [4]))  # Android Back
-                    self.hud_status = "ANDROID: BACK BUTTON"
-                    self.last_adb_gesture_time = now
-                elif index_tip.x > 0.78:
-                    self.adb_queue.put(("keyevent", [187]))  # Android Recent Apps / Overview
-                    self.hud_status = "ANDROID: RECENT APPS"
-                    self.last_adb_gesture_time = now
+            # Feature: Open Palm 4-Way Global Navigation (400ms Edge Dwell Hold)
+            if is_open_palm:
+                current_zone = None
+                if index_tip.x < 0.20:
+                    current_zone = "BACK"
+                elif index_tip.x > 0.80:
+                    current_zone = "RECENTS"
                 elif index_tip.y < 0.20:
-                    self.adb_queue.put(("keyevent", [3]))  # Android Home
-                    self.hud_status = "ANDROID: HOME SCREEN"
-                    self.last_adb_gesture_time = now
-                elif index_tip.y > 0.78:
-                    self.adb_queue.put(("shell", ["cmd statusbar expand-notifications"]))  # Android Notification Shade
-                    self.hud_status = "ANDROID: NOTIFICATIONS"
-                    self.last_adb_gesture_time = now
+                    current_zone = "HOME"
+                elif index_tip.y > 0.80:
+                    current_zone = "NOTIFICATIONS"
+
+                if current_zone is not None:
+                    if self.active_edge_zone != current_zone:
+                        self.active_edge_zone = current_zone
+                        self.open_palm_edge_hold_start = now
+                        self.hud_status = f"ANDROID: HOLD FOR {current_zone}..."
+                    else:
+                        hold_duration = now - self.open_palm_edge_hold_start
+                        if hold_duration >= 0.40 and (now - self.last_adb_gesture_time > 0.80):
+                            self.last_adb_gesture_time = now
+                            self.active_edge_zone = None
+                            self.open_palm_edge_hold_start = 0.0
+                            if current_zone == "BACK":
+                                self.adb_queue.put(("keyevent", [4]))  # Android Back
+                                self.hud_status = "ANDROID: BACK BUTTON"
+                            elif current_zone == "RECENTS":
+                                self.adb_queue.put(("keyevent", [187]))  # Android Recent Apps
+                                self.hud_status = "ANDROID: RECENT APPS"
+                            elif current_zone == "HOME":
+                                self.adb_queue.put(("keyevent", [3]))  # Android Home
+                                self.hud_status = "ANDROID: HOME SCREEN"
+                            elif current_zone == "NOTIFICATIONS":
+                                self.adb_queue.put(("shell", ["cmd statusbar expand-notifications"]))
+                                self.hud_status = "ANDROID: NOTIFICATIONS"
+                        else:
+                            self.hud_status = f"ANDROID: HOLDING FOR {current_zone} ({int(hold_duration * 1000)}ms)"
+                else:
+                    self.active_edge_zone = None
+                    self.open_palm_edge_hold_start = 0.0
+                    self.hud_status = "ANDROID: OPEN PALM (CENTER)"
 
             # Feature: Two-Finger Reels / Shorts & Tab Switching (Option A - Directional Dominance)
-            elif index_extended and middle_extended and not ring_extended and not pinky_extended and not is_left_click:
+            # 2.5s Lockout Anti-Rebound Guard
+            elif is_two_finger and not is_left_click:
+                self.active_edge_zone = None
+                self.open_palm_edge_hold_start = 0.0
                 curr_x = (index_tip.x + middle_tip.x) / 2.0
                 curr_y = (index_tip.y + middle_tip.y) / 2.0
                 if not self.is_scrolling:
@@ -505,8 +520,8 @@ class AirController:
                         stroke_duration = now - self.stroke_start_time
                         speed = math.hypot(vx, vy)
 
-                        # Re-arm when hand settles or slows down
-                        if not self.is_scroll_armed and speed < 0.45:
+                        # Re-arm only when hand settles or slows down completely
+                        if not self.is_scroll_armed and speed < 0.25:
                             self.is_scroll_armed = True
                             self.stroke_start_x = curr_x
                             self.stroke_start_y = curr_y
@@ -518,13 +533,13 @@ class AirController:
                             abs_dx = abs(total_dx)
                             abs_dy = abs(total_dy)
 
-                            # 1. VERTICAL DOMINANCE (Reels & Shorts): abs_vy > 1.35 * abs_vx
-                            if abs_vy > 1.35 * abs_vx and abs_vy > 1.0 and abs_dy > 0.06:
+                            # 1. VERTICAL DOMINANCE (Reels & Shorts): abs_vy > 1.35 * abs_vx, abs_vy > 1.30, abs_dy > 0.11
+                            if abs_vy > 1.35 * abs_vx and abs_vy > 1.30 and abs_dy > 0.11:
                                 cx = self.phone_w // 2
                                 if vy < 0:
                                     # Flick UP -> NEXT REEL
-                                    is_reverse_locked = (self.last_scroll_direction == "DOWN") and (now - self.last_scroll_action_time < 1.20)
-                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
+                                    is_reverse_locked = (self.last_scroll_direction == "DOWN") and (now - self.last_scroll_action_time < 2.50)
+                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.40):
                                         self.adb_queue.put(("swipe", [cx, int(self.phone_h * 0.75), cx, int(self.phone_h * 0.25), 220]))
                                         self.hud_status = "ANDROID: NEXT REEL [FLICK UP]"
                                         self.last_adb_gesture_time = now
@@ -536,8 +551,8 @@ class AirController:
                                         self.last_two_finger_time = now
                                 else:
                                     # Flick DOWN -> PREVIOUS REEL
-                                    is_reverse_locked = (self.last_scroll_direction == "UP") and (now - self.last_scroll_action_time < 1.20)
-                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
+                                    is_reverse_locked = (self.last_scroll_direction == "UP") and (now - self.last_scroll_action_time < 2.50)
+                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.40):
                                         self.adb_queue.put(("swipe", [cx, int(self.phone_h * 0.25), cx, int(self.phone_h * 0.75), 220]))
                                         self.hud_status = "ANDROID: PREV REEL [FLICK DOWN]"
                                         self.last_adb_gesture_time = now
@@ -548,13 +563,13 @@ class AirController:
                                         self.last_two_finger_y = curr_y
                                         self.last_two_finger_time = now
 
-                            # 2. HORIZONTAL DOMINANCE (Tabs, Photos & Stories): abs_vx > 1.35 * abs_vy
-                            elif abs_vx > 1.35 * abs_vy and abs_vx > 0.90 and abs_dx > 0.06:
+                            # 2. HORIZONTAL DOMINANCE (Tabs, Photos & Stories): abs_vx > 1.35 * abs_vy, abs_vx > 1.10, abs_dx > 0.10
+                            elif abs_vx > 1.35 * abs_vy and abs_vx > 1.10 and abs_dx > 0.10:
                                 mid_y = self.phone_h // 2
                                 if vx < 0:
                                     # Push LEFT -> NEXT TAB / STORY
-                                    is_reverse_locked = (self.last_scroll_direction == "RIGHT") and (now - self.last_scroll_action_time < 1.20)
-                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
+                                    is_reverse_locked = (self.last_scroll_direction == "RIGHT") and (now - self.last_scroll_action_time < 2.50)
+                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.40):
                                         x1 = int(self.phone_w * 0.85)
                                         x2 = int(self.phone_w * 0.15)
                                         self.adb_queue.put(("swipe", [x1, mid_y, x2, mid_y, 180]))
@@ -568,8 +583,8 @@ class AirController:
                                         self.last_two_finger_time = now
                                 else:
                                     # Push RIGHT -> PREV TAB / STORY
-                                    is_reverse_locked = (self.last_scroll_direction == "LEFT") and (now - self.last_scroll_action_time < 1.20)
-                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
+                                    is_reverse_locked = (self.last_scroll_direction == "LEFT") and (now - self.last_scroll_action_time < 2.50)
+                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.40):
                                         x1 = int(self.phone_w * 0.15)
                                         x2 = int(self.phone_w * 0.85)
                                         self.adb_queue.put(("swipe", [x1, mid_y, x2, mid_y, 180]))
@@ -593,21 +608,19 @@ class AirController:
                         self.last_two_finger_y = curr_y
                         self.last_two_finger_time = now
             else:
+                self.active_edge_zone = None
+                self.open_palm_edge_hold_start = 0.0
                 self.is_scrolling = False
-                self.last_two_finger_x = None
                 self.last_two_finger_x = None
                 self.last_two_finger_y = None
                 self.is_scroll_armed = True
 
-                # Feature: Android 3-Tier Touch (Instant Tap, Double Tap & Hover-to-Open)
+                # Feature: Air-Tap Phone Touch with Anchor & Double-Tap
                 if is_left_click:
                     if self.tap_state == "IDLE":
                         self.tap_state = "DIPPED"
                         self.tap_start_time = now
                         self.click_anchor_pos = (filtered_x, filtered_y)
-                    self.hover_start_time = now
-                    self.is_hover_triggered = False
-                    self.hover_cooldown_until = now + 1.10
                 else:
                     if self.tap_state == "DIPPED":
                         dip_duration = now - self.tap_start_time
@@ -631,31 +644,10 @@ class AirController:
                                 self.hud_status = f"ANDROID: AIR-TAP ({tap_x}, {tap_y})"
 
                             self.last_adb_gesture_time = now
-                            self.hover_start_time = now
-                            self.is_hover_triggered = False
-                            self.hover_cooldown_until = now + 1.10
                         self.tap_state = "IDLE"
                         self.click_anchor_pos = None
                     else:
-                        # Hover-to-Open (Dwell Auto-Click after 0.85s stillness)
-                        drift = math.hypot(filtered_x - self.hover_anchor_x, filtered_y - self.hover_anchor_y)
-                        if drift < 35:
-                            if now > self.hover_cooldown_until:
-                                elapsed = now - self.hover_start_time
-                                if elapsed >= 0.85 and not self.is_hover_triggered:
-                                    self.is_hover_triggered = True
-                                    self.hover_cooldown_until = now + 1.20
-                                    self.adb_queue.put(("tap", [int(self.hover_anchor_x), int(self.hover_anchor_y)]))
-                                    self.hud_status = f"ANDROID: HOVER-CLICK [AUTO-OPEN] ({int(self.hover_anchor_x)}, {int(self.hover_anchor_y)})"
-                                    self.last_adb_gesture_time = now
-                                elif elapsed > 0.20:
-                                    pct = int(min(1.0, elapsed / 0.85) * 100)
-                                    self.hud_status = f"ANDROID: HOVERING TO OPEN ({pct}%)"
-                        else:
-                            self.hover_anchor_x = filtered_x
-                            self.hover_anchor_y = filtered_y
-                            self.hover_start_time = now
-                            self.is_hover_triggered = False
+                        self.hud_status = "ANDROID: AIMING (TOUCH PUCK)"
 
             self.last_cursor_pos = (filtered_x, filtered_y)
             self._render_hud(frame, coords=(filtered_x, filtered_y))

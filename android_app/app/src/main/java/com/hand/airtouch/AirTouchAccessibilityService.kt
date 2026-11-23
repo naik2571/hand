@@ -170,7 +170,7 @@ class AirTouchAccessibilityService : AccessibilityService(), LifecycleOwner {
             val action = gestureDetector?.processLandmarks(primaryHand)
             val gd = gestureDetector
             if (gd != null) {
-                val isPuckActive = gd.isDippingOrPinching || gd.hoverProgress > 0.30f
+                val isPuckActive = gd.isDippingOrPinching
                 updateCursorPosition(gd.currentPointerX, gd.currentPointerY, isPuckActive, isVisible = true)
             }
             action?.let { executeGesture(it) }

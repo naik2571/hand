@@ -5,23 +5,24 @@
 Next-Gen Touchless Finger Controller for Windows 10/11 & Android Smartphones.
 
 Target 1: LAPTOP (Win32 Desktop)
-  - Precision Aiming: Single Index Finger "Laser Pointer" Pose (1€ adaptive filter).
-  - Air Clutch: Relaxed fist or neutral hand instantly freezes cursor for zero-strain arm repositioning.
+  - Precision Aiming: Laser Pointer tracking (1€ adaptive filter).
+  - Multi-Finger Tracking: Displays all 5 fingertips (Thumb, Index, Middle, Ring, Pinky).
+  - Air Clutch: Closed fist freezes cursor for zero-strain arm repositioning.
   - Frame Exit / Entry Memory: Remembers last valid cursor coordinate; locks on boundary loss.
-  - Air-Tap Left Click: Natural downward dip & release with "Anchor-on-Dip" zero drift lock.
-  - Double Click: Two rapid air-taps within 350 ms.
-  - Hold-to-Drag: Sustained dip (> 350 ms) engages left-button drag; straightening finger releases.
-  - Two-Finger Right Click: Index + Middle quick synchronized dip (< 200 ms).
+  - Left Click: Immediate Thumb+Index pinch OR Index Air-Tap with Anti-Shake Anchor.
+  - Double Click: Two rapid pinches/taps within 380 ms.
+  - Hold-to-Drag: Sustained pinch while moving hand (> 28px) drags windows/files; release drops.
+  - Right Click: Instant Thumb+Middle pinch OR Middle finger air-tap.
   - Two-Finger Scroll: Index + Middle sustained vertical translation.
 
 Target 2: ANDROID SMARTPHONE (ADB Remote Touch & Navigation)
   - Air Swing Tab Navigation: Open palm horizontal flick (Left/Right) switches app tabs/screens.
   - Reels / Shorts Flip: Two-finger vertical swipe flips video feed.
-  - Screen Tap: Index air-tap sends high-precision touch event to phone.
+  - Screen Tap: Index air-tap or thumb-index pinch sends touch event to phone.
   - Home / Back: Upward / Leftward open-palm navigation flicks.
 
 Visuals:
-  - Minimalist Laser Pointer Reticle (default, high visibility, zero screen clutter).
+  - Multi-Fingertip Laser HUD (default, tracks all 5 fingers with pinch distance lines).
   - [S] Full 21-Joint Glowing Hand Skeleton Mesh with anatomical bone connections.
 =============================================================================
 """
@@ -98,7 +99,7 @@ class OneEuroFilter:
 
 class AirController:
     """
-    Touchless Laser Pointer and Gesture Controller.
+    Touchless Multi-Finger Laser Pointer and Gesture Controller.
     Lifecycle compliant: on_enter(), update(), on_exit().
     """
     def __init__(self):
@@ -126,17 +127,20 @@ class AirController:
         self.last_cursor_pos = (self.screen_w // 2, self.screen_h // 2)
         self.reentry_stabilize_until = 0.0
 
-        # Air-Tap / Click State Machine
-        self.tap_state = "IDLE"  # "IDLE", "DIPPED"
-        self.tap_start_time = 0.0
-        self.click_anchor_pos = None
+        # Left Click & Drag State Machine
+        self.is_left_down = False
+        self.left_down_time = 0.0
+        self.has_dragged = False
         self.is_dragging = False
+        self.click_anchor_pos = None
         self.last_click_time = 0.0
+        self.tap_state = "IDLE"  # For Android mode
+        self.tap_start_time = 0.0
 
-        # Two-Finger State (Right Click vs Scroll)
-        self.two_finger_dip_start = 0.0
-        self.two_finger_dipped = False
+        # Right Click State Machine
         self.last_right_click_time = 0.0
+
+        # Two-Finger Scrolling
         self.is_scrolling = False
         self.last_scroll_y = 0.0
         self.last_scroll_time = 0.0
@@ -227,9 +231,9 @@ class AirController:
         return self.set_target(new_target)
 
     def toggle_skeleton(self):
-        """Toggle between minimalist laser pointer and full 21-joint skeleton mesh."""
+        """Toggle between multi-finger laser HUD and full 21-joint skeleton mesh."""
         self.show_skeleton = not self.show_skeleton
-        mode_str = "FULL 21-JOINT HAND SKELETON" if self.show_skeleton else "MINIMAL LASER POINTER"
+        mode_str = "FULL 21-JOINT HAND SKELETON" if self.show_skeleton else "MULTI-FINGER LASER HUD"
         print(f"[AirController] Visuals: {mode_str}")
 
     def on_enter(self):
@@ -239,6 +243,8 @@ class AirController:
         self.filter_x = None
         self.filter_y = None
         self.click_anchor_pos = None
+        self.is_left_down = False
+        self.has_dragged = False
         self.is_dragging = False
         self.tap_state = "IDLE"
         self.is_scrolling = False
@@ -249,8 +255,10 @@ class AirController:
 
     def on_exit(self):
         """Lifecycle hook when leaving AirController mode. Releases all mouse locks."""
-        if self.is_dragging:
+        if self.is_left_down or self.is_dragging:
             user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+            self.is_left_down = False
+            self.has_dragged = False
             self.is_dragging = False
         self.click_anchor_pos = None
         self.filter_x = None
@@ -276,11 +284,11 @@ class AirController:
         return target_x, target_y
 
     def update(self, frame, landmarks_list):
-        """Processes one frame, handles Air Clutch, Laser Pointer, Air-Tap, and Android Swings."""
+        """Processes one frame, handles Air Clutch, Multi-Finger Laser HUD, and Left/Right clicks."""
         now = time.time()
         h, w, _ = frame.shape
 
-        # Render 70% active inner-box overlay
+        # Render active inner-box overlay (70% frame)
         bx1, by1 = int(self.box_x_min * w), int(self.box_y_min * h)
         bx2, by2 = int(self.box_x_max * w), int(self.box_y_max * h)
         box_color = (0, 200, 255) if self.target_mode == "ANDROID" else (70, 70, 70)
@@ -293,12 +301,15 @@ class AirController:
         # FRAME EXIT / MEMORY HANDLING: Hand not visible in frame
         # -------------------------------------------------------------
         if not landmarks_list or len(landmarks_list) == 0:
-            if self.is_dragging and self.target_mode == "LAPTOP":
+            if (self.is_left_down or self.is_dragging) and self.target_mode == "LAPTOP":
                 user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+                self.is_left_down = False
+                self.has_dragged = False
                 self.is_dragging = False
             self.hud_status = "HAND OUT OF FRAME (POINTER LOCKED)"
             self.click_anchor_pos = None
             self.tap_state = "IDLE"
+            self.is_scrolling = False
             self.reentry_stabilize_until = now + 0.15
             self._render_hud(frame, coords=self.last_cursor_pos)
             return frame
@@ -312,40 +323,56 @@ class AirController:
         index_mcp = pts[5]
         index_pip = pts[6]
         index_tip = pts[8]
+        middle_mcp = pts[9]
+        middle_pip = pts[10]
         middle_tip = pts[12]
         ring_tip = pts[16]
         pinky_tip = pts[20]
 
         # Normalized scale: Wrist to Middle MCP (Landmark 9)
-        hand_scale = self._euclidean(wrist, pts[9])
+        hand_scale = self._euclidean(wrist, middle_mcp)
         if hand_scale < 0.05:
             hand_scale = 0.20
 
         # Finger extension states
         index_extended = self._euclidean(index_tip, wrist) > self._euclidean(index_pip, wrist) + 0.02
-        middle_extended = self._euclidean(middle_tip, wrist) > self._euclidean(pts[10], wrist) + 0.02
+        middle_extended = self._euclidean(middle_tip, wrist) > self._euclidean(middle_pip, wrist) + 0.02
         ring_extended = self._euclidean(ring_tip, wrist) > self._euclidean(pts[14], wrist) + 0.02
         pinky_extended = self._euclidean(pinky_tip, wrist) > self._euclidean(pts[18], wrist) + 0.02
 
+        # Pinch distances (normalized to hand scale)
+        pinch_l = self._euclidean(thumb_tip, index_tip) / hand_scale
+        pinch_r = self._euclidean(thumb_tip, middle_tip) / hand_scale
+
+        # Flexion / Dip distances (depth & angle invariant)
+        index_dip_y = (index_pip.y - index_tip.y) / hand_scale
+        index_flex = self._euclidean(index_tip, index_mcp) / hand_scale
+        middle_dip_y = (middle_pip.y - middle_tip.y) / hand_scale
+        middle_flex = self._euclidean(middle_tip, middle_mcp) / hand_scale
+
+        # High-reliability gesture classification:
+        # 1. Closed Fist: All 4 fingers curled, thumb relaxed
+        is_fist = (not index_extended) and (not middle_extended) and (not ring_extended) and (not pinky_extended) and (pinch_l > 0.35)
+
+        # 2. Right Click Trigger: Thumb-Middle pinch (< 0.32) OR Middle finger downward dip / tap
+        is_right_pinch = (pinch_r < 0.32) and (pinch_l > 0.25)
+        is_middle_tap = index_extended and ((middle_dip_y < 0.16) or (middle_flex < 0.58)) and (not ring_extended) and (pinch_l > 0.30)
+        is_right_click = (is_right_pinch or is_middle_tap) and (not is_fist)
+
+        # 3. Left Click Trigger: Thumb-Index pinch (< 0.34) OR Index finger downward dip / forward tap
+        is_left_pinch = pinch_l < 0.34
+        is_index_tap = ((index_dip_y < 0.16) or (index_flex < 0.58)) and (not middle_extended)
+        is_left_click = (is_left_pinch or is_index_tap) and (not is_right_click) and (not is_fist)
+
         # -------------------------------------------------------------
-        # VISUAL RENDERING: Full 21-Joint Mesh or Minimal Laser Pointer
+        # VISUAL RENDERING: Full 21-Joint Mesh or Multi-Finger Laser HUD
         # -------------------------------------------------------------
         if self.show_skeleton:
             self._render_skeleton_mesh(frame, pts)
         else:
-            self._render_laser_pointer(frame, pts)
-
-        # -------------------------------------------------------------
-        # POSE CLASSIFICATION:
-        # 1. Pointing Pose: Index extended, Middle/Ring/Pinky curled
-        # 2. Two-Finger Pose: Index + Middle extended, Ring/Pinky curled
-        # 3. Open Palm Pose: All fingers extended
-        # 4. Fist / Clutch Pose: All fingers curled
-        # -------------------------------------------------------------
-        is_pointing_pose = index_extended and not middle_extended and not ring_extended and not pinky_extended
-        is_two_finger_pose = index_extended and middle_extended and not ring_extended and not pinky_extended
-        is_open_palm = index_extended and middle_extended and ring_extended and pinky_extended
-        is_fist = not index_extended and not middle_extended and not ring_extended and not pinky_extended
+            self._render_laser_pointer(frame, pts, pinch_l=pinch_l, pinch_r=pinch_r,
+                                       is_left=(is_left_click or self.is_left_down),
+                                       is_right=is_right_click)
 
         # Map index tip coordinates
         raw_x, raw_y = self._map_coordinate(index_tip.x, index_tip.y)
@@ -384,13 +411,11 @@ class AirController:
                     if abs(vx_wrist) > 1.2 and (now - self.last_adb_gesture_time > 0.60):
                         mid_y = self.phone_h // 2
                         if vx_wrist > 1.2:
-                            # Swung RIGHT -> Swipe Left to Right (Previous Tab / Screen)
                             x1 = int(self.phone_w * 0.20)
                             x2 = int(self.phone_w * 0.80)
                             self.adb_queue.put(("swipe", [x1, mid_y, x2, mid_y, 160]))
                             self.hud_status = "ANDROID: SWIPE RIGHT [PREV TAB]"
                         else:
-                            # Swung LEFT -> Swipe Right to Left (Next Tab / Screen)
                             x1 = int(self.phone_w * 0.80)
                             x2 = int(self.phone_w * 0.20)
                             self.adb_queue.put(("swipe", [x1, mid_y, x2, mid_y, 160]))
@@ -400,6 +425,7 @@ class AirController:
             self.last_wrist_time = now
 
             # Feature: Open Palm Upward/Leftward Navigation Buttons
+            is_open_palm = index_extended and middle_extended and ring_extended and pinky_extended
             if is_open_palm and (now - self.last_adb_gesture_time > 0.80):
                 if index_tip.x < 0.22:
                     self.adb_queue.put(("keyevent", [4]))  # Android Back
@@ -411,7 +437,7 @@ class AirController:
                     self.last_adb_gesture_time = now
 
             # Feature: Two-Finger Reels / Shorts Vertical Swipe
-            elif is_two_finger_pose:
+            elif index_extended and middle_extended and not ring_extended and not pinky_extended and not is_left_click:
                 curr_y = (index_tip.y + middle_tip.y) / 2.0
                 if not self.is_scrolling:
                     self.is_scrolling = True
@@ -434,12 +460,8 @@ class AirController:
             else:
                 self.is_scrolling = False
 
-                # Feature: Index Air-Tap (Phone Touch)
-                index_dip = (index_pip.y - index_tip.y) / hand_scale
-                pinch_dist = self._euclidean(thumb_tip, index_tip) / hand_scale
-                is_dipping = (index_dip < 0.10) or (pinch_dist < 0.28)
-
-                if is_dipping:
+                # Feature: Air-Tap (Phone Touch)
+                if is_left_click:
                     if self.tap_state == "IDLE":
                         self.tap_state = "DIPPED"
                         self.tap_start_time = now
@@ -447,7 +469,7 @@ class AirController:
                 else:
                     if self.tap_state == "DIPPED":
                         dip_duration = now - self.tap_start_time
-                        if dip_duration < 0.35 and (now - self.last_adb_gesture_time > 0.30):
+                        if dip_duration < 0.50 and (now - self.last_adb_gesture_time > 0.25):
                             tap_x = self.click_anchor_pos[0] if self.click_anchor_pos else filtered_x
                             tap_y = self.click_anchor_pos[1] if self.click_anchor_pos else filtered_y
                             self.adb_queue.put(("tap", [tap_x, tap_y]))
@@ -465,47 +487,113 @@ class AirController:
         # =============================================================
 
         # -------------------------------------------------------------
-        # GESTURE: Air Clutch (Resting Hand / Arm Repositioning)
-        # Only engages on explicit Closed Fist or Wide Open Palm
+        # 1. GESTURE: Air Clutch (Resting Hand / Arm Repositioning)
+        # Engaged ONLY on Closed Fist
         # -------------------------------------------------------------
-        if is_fist or is_open_palm:
-            if self.is_dragging:
+        if is_fist:
+            if self.is_left_down or self.has_dragged:
                 user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+                self.is_left_down = False
+                self.has_dragged = False
                 self.is_dragging = False
                 self.hud_status = "DRAG RELEASED (CLUTCH)"
             else:
-                self.hud_status = "AIR CLUTCH (POINTER FROZEN - REPOSITION ARM)"
+                self.hud_status = "AIR CLUTCH (CLOSED FIST - POINTER FROZEN)"
             self.click_anchor_pos = None
-            self.tap_state = "IDLE"
             self.is_scrolling = False
             self._render_hud(frame, coords=self.last_cursor_pos)
             return frame
 
         # -------------------------------------------------------------
-        # GESTURE: Two-Finger Mode (Right Click Tap vs. Drag Scroll)
+        # 2. GESTURE: Right Click (Thumb+Middle Pinch OR Middle Tap)
         # -------------------------------------------------------------
-        if is_two_finger_pose:
-            # Check for simultaneous downward tap of index and middle
-            index_dip = (index_pip.y - index_tip.y) / hand_scale
-            middle_dip = (pts[10].y - middle_tip.y) / hand_scale
-            two_finger_dipping = (index_dip < 0.10) and (middle_dip < 0.10)
+        if is_right_click:
+            # If left button was down, release it first
+            if self.is_left_down:
+                user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+                self.is_left_down = False
+                self.has_dragged = False
+                self.is_dragging = False
+                self.click_anchor_pos = None
 
-            if two_finger_dipping:
-                if not self.two_finger_dipped:
-                    self.two_finger_dipped = True
-                    self.two_finger_dip_start = now
+            if now - self.last_right_click_time > 0.45:
+                user32.SetCursorPos(filtered_x, filtered_y)
+                user32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+                user32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+                self.last_right_click_time = now
+                self.hud_status = "RIGHT CLICK (CONTEXT MENU)"
+                self.last_cursor_pos = (filtered_x, filtered_y)
+
+            self.is_scrolling = False
+            self._render_hud(frame, coords=self.last_cursor_pos)
+            return frame
+
+        # -------------------------------------------------------------
+        # 3. GESTURE: Left Click & Drag (Thumb+Index Pinch OR Index Tap)
+        # -------------------------------------------------------------
+        if is_left_click:
+            self.is_scrolling = False
+            if not self.is_left_down:
+                # Button pressed down!
+                self.is_left_down = True
+                self.left_down_time = now
+                self.has_dragged = False
+                self.is_dragging = False
+                self.click_anchor_pos = (filtered_x, filtered_y)
+                user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+                self.hud_status = "LEFT BUTTON DOWN"
+
+            # Check if user is holding & moving (Drag) or holding still (Click Anchor)
+            drift = math.hypot(filtered_x - self.click_anchor_pos[0], filtered_y - self.click_anchor_pos[1])
+            if not self.has_dragged:
+                if drift < 28:
+                    # Anchor lock in place to eliminate tap wobble
+                    cursor_x, cursor_y = self.click_anchor_pos
+                else:
+                    # User moved past deadzone: actively dragging
+                    self.has_dragged = True
+                    self.is_dragging = True
+                    cursor_x, cursor_y = filtered_x, filtered_y
+                    self.hud_status = "HOLDING TO DRAG"
             else:
-                if self.two_finger_dipped:
-                    dip_dur = now - self.two_finger_dip_start
-                    if dip_dur < 0.30 and (now - self.last_right_click_time > 0.40):
-                        # Fires Right Click (Context Menu)
-                        user32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
-                        user32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
-                        self.last_right_click_time = now
-                        self.hud_status = "TWO-FINGER AIR-TAP -> RIGHT CLICK"
-                    self.two_finger_dipped = False
+                cursor_x, cursor_y = filtered_x, filtered_y
+                self.hud_status = "HOLDING TO DRAG"
 
-            # Two-Finger Vertical Scroll
+            user32.SetCursorPos(cursor_x, cursor_y)
+            self.last_cursor_pos = (cursor_x, cursor_y)
+            self._render_hud(frame, coords=(cursor_x, cursor_y))
+            return frame
+
+        else:
+            # Finger is not dipping / pinching
+            if self.is_left_down:
+                # Button released!
+                user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+                self.is_left_down = False
+                was_drag = self.has_dragged
+                self.has_dragged = False
+                self.is_dragging = False
+
+                if not was_drag:
+                    # Successful clean Click!
+                    if now - self.last_click_time < 0.38:
+                        # Double click
+                        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+                        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+                        self.hud_status = "AIR-TAP -> DOUBLE CLICK!"
+                    else:
+                        self.hud_status = "AIR-TAP -> LEFT CLICK!"
+                    self.last_click_time = now
+                else:
+                    self.hud_status = "DRAG RELEASED"
+
+                self.click_anchor_pos = None
+
+        # -------------------------------------------------------------
+        # 4. GESTURE: Two-Finger Scroll
+        # -------------------------------------------------------------
+        is_scroll_pose = index_extended and middle_extended and (not ring_extended) and (not pinky_extended) and (pinch_l > 0.38) and (pinch_r > 0.38)
+        if is_scroll_pose:
             curr_y = (index_tip.y + middle_tip.y) / 2.0
             if not self.is_scrolling:
                 self.is_scrolling = True
@@ -513,121 +601,107 @@ class AirController:
                 self.last_scroll_time = now
             else:
                 dy = curr_y - self.last_scroll_y
-                if abs(dy) > 0.012 and not self.two_finger_dipped:
-                    scroll_amount = int(-dy * 900)
+                if abs(dy) > 0.010:
+                    scroll_amount = int(-dy * 950)
                     user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, scroll_amount, 0)
                     self.last_scroll_y = curr_y
                     self.last_scroll_time = now
                     self.hud_status = "TWO-FINGER SCROLLING"
 
+            user32.SetCursorPos(filtered_x, filtered_y)
             self.last_cursor_pos = (filtered_x, filtered_y)
             self._render_hud(frame, coords=(filtered_x, filtered_y))
             return frame
         else:
             self.is_scrolling = False
-            self.two_finger_dipped = False
 
         # -------------------------------------------------------------
-        # GESTURE: Pointing Pose (Precision Aiming & Air-Tap Left Click)
-        # Dual-trigger: Downward dip OR thumb-index pinch
+        # 5. GESTURE: Precision Laser Aiming (Standard Mouse Movement)
         # -------------------------------------------------------------
-        index_dip = (index_pip.y - index_tip.y) / hand_scale
-        pinch_dist = self._euclidean(thumb_tip, index_tip) / hand_scale
-        is_dipping = (index_dip < 0.10) or (pinch_dist < 0.28)
+        user32.SetCursorPos(filtered_x, filtered_y)
+        self.last_cursor_pos = (filtered_x, filtered_y)
 
-        # Anti-Shake Anchor on Dip / Pinch
-        if is_dipping:
-            if self.click_anchor_pos is None and not self.is_dragging:
-                self.click_anchor_pos = (filtered_x, filtered_y)
-            if self.tap_state == "IDLE":
-                self.tap_state = "DIPPED"
-                self.tap_start_time = now
-        else:
-            if not self.is_dragging:
-                self.click_anchor_pos = None
+        # Retain click status briefly so the user sees the confirmation text
+        if not ("CLICK" in self.hud_status and (now - max(self.last_click_time, self.last_right_click_time) < 0.40)):
+            self.hud_status = "LASER POINTER (AIMING)"
 
-        cursor_x, cursor_y = filtered_x, filtered_y
-        if self.click_anchor_pos is not None:
-            drift = math.hypot(filtered_x - self.click_anchor_pos[0], filtered_y - self.click_anchor_pos[1])
-            if drift < 35 and not self.is_dragging:
-                # FREEZE cursor in place during the dip to prevent tap slip!
-                cursor_x, cursor_y = self.click_anchor_pos
-            elif drift >= 35 and is_dipping:
-                # Intentional arm move while dipping engages Drag Mode
-                if not self.is_dragging:
-                    user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-                    self.is_dragging = True
-                    self.hud_status = "HOLDING TO DRAG"
-                cursor_x, cursor_y = filtered_x, filtered_y
-
-        # Move native Windows cursor
-        user32.SetCursorPos(cursor_x, cursor_y)
-        self.last_cursor_pos = (cursor_x, cursor_y)
-
-        # Tap resolution: Check for hold (drag) or release (click / double-click)
-        if self.tap_state == "DIPPED":
-            dip_duration = now - self.tap_start_time
-            if dip_duration > 0.35 and not self.is_dragging:
-                # Held down > 350 ms -> Engage Drag
-                user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-                self.is_dragging = True
-                self.hud_status = "HOLDING TO DRAG"
-        elif self.tap_state == "IDLE":
-            pass
-
-        # When finger straightens back up
-        if not is_dipping:
-            if self.is_dragging:
-                user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-                self.is_dragging = False
-                self.hud_status = "DRAG RELEASED"
-                self.tap_state = "IDLE"
-                self.click_anchor_pos = None
-            elif self.tap_state == "DIPPED":
-                dip_duration = now - self.tap_start_time
-                if dip_duration <= 0.35:
-                    click_x = self.click_anchor_pos[0] if self.click_anchor_pos else cursor_x
-                    click_y = self.click_anchor_pos[1] if self.click_anchor_pos else cursor_y
-                    user32.SetCursorPos(click_x, click_y)
-
-                    time_since_last_click = now - self.last_click_time
-                    if time_since_last_click < 0.38:
-                        # Double Click
-                        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-                        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-                        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-                        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-                        self.hud_status = "AIR-TAP -> DOUBLE CLICK!"
-                    else:
-                        # Single Click
-                        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-                        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-                        self.hud_status = "AIR-TAP -> LEFT CLICK!"
-                    self.last_click_time = now
-
-                self.tap_state = "IDLE"
-                self.click_anchor_pos = None
-            else:
-                if not self.is_dragging:
-                    self.hud_status = "LASER POINTER (AIMING)"
-
-        self._render_hud(frame, coords=(cursor_x, cursor_y))
+        self._render_hud(frame, coords=(filtered_x, filtered_y))
         return frame
 
-    def _render_laser_pointer(self, frame, pts):
-        """Minimalist high-visibility laser reticle at the index fingertip."""
+    def _render_laser_pointer(self, frame, pts, pinch_l=1.0, pinch_r=1.0, is_left=False, is_right=False):
+        """
+        High-visibility multi-finger tracking HUD.
+        Renders all 5 fingertips clearly so the user sees full-hand capture,
+        with dynamic gesture guidance lines and precision laser reticle.
+        """
         h, w, _ = frame.shape
-        ix, iy = int(pts[8].x * w), int(pts[8].y * h)
+        coords = [(int(p.x * w), int(p.y * h)) for p in pts]
 
-        color = (0, 0, 255) if self.is_dragging else ((0, 255, 255) if self.tap_state == "DIPPED" else (0, 255, 0))
+        tx, ty = coords[4]   # Thumb
+        ix, iy = coords[8]   # Index
+        mx, my = coords[12]  # Middle
+        rx, ry = coords[16]  # Ring
+        px, py = coords[20]  # Pinky
 
-        # Glowing target reticle
-        cv2.circle(frame, (ix, iy), 6, color, -1, cv2.LINE_AA)
+        # -------------------------------------------------------------
+        # 1. Dynamic Gesture Guide Lines
+        # -------------------------------------------------------------
+        # A. Left-Click Guide Line (Thumb to Index)
+        if is_left or pinch_l < 0.34:
+            cv2.line(frame, (tx, ty), (ix, iy), (0, 255, 255), 3, cv2.LINE_AA)
+            mid_l = ((tx + ix) // 2, (ty + iy) // 2)
+            cv2.circle(frame, mid_l, 6, (0, 255, 255), -1, cv2.LINE_AA)
+            cv2.putText(frame, "L-CLICK", (mid_l[0] + 8, mid_l[1] - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 255), 1, cv2.LINE_AA)
+        elif pinch_l < 0.55:
+            cv2.line(frame, (tx, ty), (ix, iy), (100, 180, 100), 1, cv2.LINE_AA)
+            mid_l = ((tx + ix) // 2, (ty + iy) // 2)
+            cv2.putText(frame, f"{pinch_l:.2f}", (mid_l[0] + 6, mid_l[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (160, 220, 160), 1, cv2.LINE_AA)
+
+        # B. Right-Click Guide Line (Thumb to Middle)
+        if is_right or pinch_r < 0.32:
+            cv2.line(frame, (tx, ty), (mx, my), (255, 0, 255), 3, cv2.LINE_AA)
+            mid_r = ((tx + mx) // 2, (ty + my) // 2)
+            cv2.circle(frame, mid_r, 6, (255, 0, 255), -1, cv2.LINE_AA)
+            cv2.putText(frame, "R-CLICK", (mid_r[0] + 8, mid_r[1] - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 0, 255), 1, cv2.LINE_AA)
+        elif pinch_r < 0.50:
+            cv2.line(frame, (tx, ty), (mx, my), (160, 100, 180), 1, cv2.LINE_AA)
+
+        # -------------------------------------------------------------
+        # 2. Render All 5 Fingertips with Distinct Roles & Colors
+        # -------------------------------------------------------------
+        # Thumb (Landmark 4) - Gold / Cyan
+        cv2.circle(frame, (tx, ty), 7, (255, 200, 0), -1, cv2.LINE_AA)
+        cv2.circle(frame, (tx, ty), 9, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, "THUMB", (tx + 10, ty + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 220, 120), 1, cv2.LINE_AA)
+
+        # Index (Landmark 8) - Active Laser Reticle (Aiming / Pointer)
+        reticle_color = (0, 0, 255) if self.has_dragged else ((0, 255, 255) if (is_left or self.is_left_down) else (0, 255, 0))
+        cv2.circle(frame, (ix, iy), 6, reticle_color, -1, cv2.LINE_AA)
         cv2.circle(frame, (ix, iy), 14, (255, 255, 255), 1, cv2.LINE_AA)
         cv2.line(frame, (ix - 20, iy), (ix - 8, iy), (255, 255, 255), 1, cv2.LINE_AA)
         cv2.line(frame, (ix + 8, iy), (ix + 20, iy), (255, 255, 255), 1, cv2.LINE_AA)
         cv2.line(frame, (ix, iy - 20), (ix, iy - 8), (255, 255, 255), 1, cv2.LINE_AA)
         cv2.line(frame, (ix, iy + 8), (ix, iy + 20), (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, "INDEX [AIM]", (ix + 16, iy - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.38, reticle_color, 1, cv2.LINE_AA)
+
+        # Middle (Landmark 12) - Sky Blue / Magenta
+        m_color = (255, 0, 255) if (is_right or pinch_r < 0.32) else (255, 180, 50)
+        cv2.circle(frame, (mx, my), 7, m_color, -1, cv2.LINE_AA)
+        cv2.circle(frame, (mx, my), 9, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, "MIDDLE", (mx + 10, my + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, m_color, 1, cv2.LINE_AA)
+
+        # Ring (Landmark 16) - Warm Orange
+        cv2.circle(frame, (rx, ry), 6, (100, 200, 255), -1, cv2.LINE_AA)
+        cv2.circle(frame, (rx, ry), 8, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, "RING", (rx + 10, ry + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (100, 200, 255), 1, cv2.LINE_AA)
+
+        # Pinky (Landmark 20) - Lavender
+        cv2.circle(frame, (px, py), 6, (220, 160, 255), -1, cv2.LINE_AA)
+        cv2.circle(frame, (px, py), 8, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, "PINKY", (px + 10, py + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (220, 160, 255), 1, cv2.LINE_AA)
 
     def _render_skeleton_mesh(self, frame, pts):
         """Draws the complete 21-joint anatomical hand skeleton mesh with glowing bone lines."""
@@ -654,10 +728,12 @@ class AirController:
         color = (0, 220, 255) if self.target_mode == "ANDROID" else (255, 255, 255)
         cv2.putText(frame, f"MODE: AIR CONTROLLER | TARGET: {self.target_mode} [Press 'T' to Toggle]", (15, 28),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 2, cv2.LINE_AA)
-        cv2.putText(frame, f"ACTION: {self.hud_status}", (15, 52),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1, cv2.LINE_AA)
 
-        skel_tag = "SKELETON MESH: [ON]" if self.show_skeleton else "SKELETON MESH: [OFF - Press 'S']"
+        action_color = (0, 255, 255) if ("CLICK" in self.hud_status or "DOWN" in self.hud_status) else ((0, 255, 100) if "AIMING" in self.hud_status else (255, 200, 200))
+        cv2.putText(frame, f"ACTION: {self.hud_status}", (15, 52),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.46, action_color, 2, cv2.LINE_AA)
+
+        skel_tag = "SKELETON MESH: [ON - Press 'S']" if self.show_skeleton else "TRACKING: ALL 5 FINGERTIPS [Laser Mode - Press 'S' for Mesh]"
         cv2.putText(frame, skel_tag, (15, 74),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 255, 180), 1, cv2.LINE_AA)
 

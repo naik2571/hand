@@ -93,10 +93,10 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="HOW TO USE AIRTOUCH:\n• Index Finger: Aim laser reticle across the screen\n• Pinch Thumb + Index: Tap / Click\n• Two Fingers (Index + Middle): Swipe / Scroll Reels\n• Open Palm: Wave Left for Back, Wave Up for Home"
-                android:textColor="#CBD5E1"
-                android:textSize="12sp"
-                android:padding="12dp"
+                android:text="AIRTOUCH GESTURE CHEAT SHEET:\n\n👉 POINTER &amp; CLICK:\n• Index Finger: Aim laser reticle\n• Pinch Thumb + Index (or Dip Index): Tap / Touch\n\n✌ TWO FINGERS (SCROLL &amp; TABS):\n• Flick UP / DOWN: Next / Previous Reel (Anti-Rebound protected)\n• Push LEFT / RIGHT: Switch Tabs / Stories / Photos\n\n✋ OPEN PALM 4-WAY NAVIGATION:\n• Move Left: Back\n• Move Right: Recent Apps (Multitasking)\n• Move Top: Home Screen\n• Move Bottom: Notification Shade &amp; Quick Settings\n\n✊ CLOSED FIST:\n• Air Clutch: Freeze pointer &amp; pause tracking"
+                android:textColor="#E2E8F0"
+                android:textSize="12.5sp"
+                android:padding="16dp"
                 android:background="#1E293B"
                 android:lineSpacingExtra="4dp" />
 

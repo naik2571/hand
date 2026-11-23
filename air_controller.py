@@ -154,12 +154,14 @@ class AirController:
         self.adb_thread = threading.Thread(target=self._adb_worker, daemon=True)
         self.adb_thread.start()
 
-        # Anti-Rebound Engine for Android Two-Finger Scrolling
+        # Anti-Rebound Engine for Android Two-Finger Scrolling & Tab Switching
+        self.last_two_finger_x = None
         self.last_two_finger_y = None
         self.last_two_finger_time = 0.0
+        self.stroke_start_x = 0.0
         self.stroke_start_y = 0.0
         self.stroke_start_time = 0.0
-        self.last_scroll_direction = None  # "UP" or "DOWN"
+        self.last_scroll_direction = None  # "UP", "DOWN", "LEFT", "RIGHT"
         self.last_scroll_action_time = 0.0
         self.is_scroll_armed = True
 
@@ -420,6 +422,7 @@ class AirController:
                 self.tap_state = "IDLE"
                 self.click_anchor_pos = None
                 self.is_scrolling = False
+                self.last_two_finger_x = None
                 self.last_two_finger_y = None
                 self.last_scroll_direction = None
                 self.is_scroll_armed = True
@@ -468,66 +471,122 @@ class AirController:
                     self.hud_status = "ANDROID: NOTIFICATIONS"
                     self.last_adb_gesture_time = now
 
-            # Feature: Two-Finger Reels / Shorts Vertical Swipe (Dual-Layer Anti-Rebound)
+            # Feature: Two-Finger Reels / Shorts & Tab Switching (Option A - Directional Dominance)
             elif index_extended and middle_extended and not ring_extended and not pinky_extended and not is_left_click:
+                curr_x = (index_tip.x + middle_tip.x) / 2.0
                 curr_y = (index_tip.y + middle_tip.y) / 2.0
                 if not self.is_scrolling:
                     self.is_scrolling = True
+                    self.stroke_start_x = curr_x
                     self.stroke_start_y = curr_y
                     self.stroke_start_time = now
+                    self.last_two_finger_x = curr_x
                     self.last_two_finger_y = curr_y
                     self.last_two_finger_time = now
                     self.is_scroll_armed = True
                 else:
                     dt = now - self.last_two_finger_time
                     if dt > 0.008:
+                        prev_x = self.last_two_finger_x if self.last_two_finger_x is not None else curr_x
                         prev_y = self.last_two_finger_y if self.last_two_finger_y is not None else curr_y
+                        vx = (curr_x - prev_x) / dt
                         vy = (curr_y - prev_y) / dt
+                        total_dx = curr_x - self.stroke_start_x
                         total_dy = curr_y - self.stroke_start_y
                         stroke_duration = now - self.stroke_start_time
+                        speed = math.hypot(vx, vy)
 
                         # Re-arm when hand settles or slows down
-                        if not self.is_scroll_armed and abs(vy) < 0.4:
+                        if not self.is_scroll_armed and speed < 0.45:
                             self.is_scroll_armed = True
+                            self.stroke_start_x = curr_x
                             self.stroke_start_y = curr_y
                             self.stroke_start_time = now
 
                         if self.is_scroll_armed:
-                            cx = self.phone_w // 2
-                            # Intentional UP flick: fast upward speed (vy < -1.0) and sufficient travel (total_dy < -0.06)
-                            if vy < -1.0 and total_dy < -0.06:
-                                is_reverse_locked = (self.last_scroll_direction == "DOWN") and (now - self.last_scroll_action_time < 1.20)
-                                if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
-                                    self.adb_queue.put(("swipe", [cx, int(self.phone_h * 0.75), cx, int(self.phone_h * 0.25), 220]))
-                                    self.hud_status = "ANDROID: NEXT REEL [SWIPE UP]"
-                                    self.last_adb_gesture_time = now
-                                    self.last_scroll_action_time = now
-                                    self.last_scroll_direction = "UP"
-                                    self.is_scroll_armed = False
-                                    self.last_two_finger_y = curr_y
-                                    self.last_two_finger_time = now
-                            # Intentional DOWN flick: fast downward speed (vy > 1.0) and sufficient travel (total_dy > 0.06)
-                            elif vy > 1.0 and total_dy > 0.06:
-                                is_reverse_locked = (self.last_scroll_direction == "UP") and (now - self.last_scroll_action_time < 1.20)
-                                if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
-                                    self.adb_queue.put(("swipe", [cx, int(self.phone_h * 0.25), cx, int(self.phone_h * 0.75), 220]))
-                                    self.hud_status = "ANDROID: PREV REEL [SWIPE DOWN]"
-                                    self.last_adb_gesture_time = now
-                                    self.last_scroll_action_time = now
-                                    self.last_scroll_direction = "DOWN"
-                                    self.is_scroll_armed = False
-                                    self.last_two_finger_y = curr_y
-                                    self.last_two_finger_time = now
+                            abs_vx = abs(vx)
+                            abs_vy = abs(vy)
+                            abs_dx = abs(total_dx)
+                            abs_dy = abs(total_dy)
+
+                            # 1. VERTICAL DOMINANCE (Reels & Shorts): abs_vy > 1.35 * abs_vx
+                            if abs_vy > 1.35 * abs_vx and abs_vy > 1.0 and abs_dy > 0.06:
+                                cx = self.phone_w // 2
+                                if vy < 0:
+                                    # Flick UP -> NEXT REEL
+                                    is_reverse_locked = (self.last_scroll_direction == "DOWN") and (now - self.last_scroll_action_time < 1.20)
+                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
+                                        self.adb_queue.put(("swipe", [cx, int(self.phone_h * 0.75), cx, int(self.phone_h * 0.25), 220]))
+                                        self.hud_status = "ANDROID: NEXT REEL [FLICK UP]"
+                                        self.last_adb_gesture_time = now
+                                        self.last_scroll_action_time = now
+                                        self.last_scroll_direction = "UP"
+                                        self.is_scroll_armed = False
+                                        self.last_two_finger_x = curr_x
+                                        self.last_two_finger_y = curr_y
+                                        self.last_two_finger_time = now
+                                else:
+                                    # Flick DOWN -> PREVIOUS REEL
+                                    is_reverse_locked = (self.last_scroll_direction == "UP") and (now - self.last_scroll_action_time < 1.20)
+                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
+                                        self.adb_queue.put(("swipe", [cx, int(self.phone_h * 0.25), cx, int(self.phone_h * 0.75), 220]))
+                                        self.hud_status = "ANDROID: PREV REEL [FLICK DOWN]"
+                                        self.last_adb_gesture_time = now
+                                        self.last_scroll_action_time = now
+                                        self.last_scroll_direction = "DOWN"
+                                        self.is_scroll_armed = False
+                                        self.last_two_finger_x = curr_x
+                                        self.last_two_finger_y = curr_y
+                                        self.last_two_finger_time = now
+
+                            # 2. HORIZONTAL DOMINANCE (Tabs, Photos & Stories): abs_vx > 1.35 * abs_vy
+                            elif abs_vx > 1.35 * abs_vy and abs_vx > 0.90 and abs_dx > 0.06:
+                                mid_y = self.phone_h // 2
+                                if vx < 0:
+                                    # Push LEFT -> NEXT TAB / STORY
+                                    is_reverse_locked = (self.last_scroll_direction == "RIGHT") and (now - self.last_scroll_action_time < 1.20)
+                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
+                                        x1 = int(self.phone_w * 0.85)
+                                        x2 = int(self.phone_w * 0.15)
+                                        self.adb_queue.put(("swipe", [x1, mid_y, x2, mid_y, 180]))
+                                        self.hud_status = "ANDROID: NEXT TAB [SWIPE LEFT]"
+                                        self.last_adb_gesture_time = now
+                                        self.last_scroll_action_time = now
+                                        self.last_scroll_direction = "LEFT"
+                                        self.is_scroll_armed = False
+                                        self.last_two_finger_x = curr_x
+                                        self.last_two_finger_y = curr_y
+                                        self.last_two_finger_time = now
+                                else:
+                                    # Push RIGHT -> PREV TAB / STORY
+                                    is_reverse_locked = (self.last_scroll_direction == "LEFT") and (now - self.last_scroll_action_time < 1.20)
+                                    if not is_reverse_locked and (now - self.last_adb_gesture_time > 0.35):
+                                        x1 = int(self.phone_w * 0.15)
+                                        x2 = int(self.phone_w * 0.85)
+                                        self.adb_queue.put(("swipe", [x1, mid_y, x2, mid_y, 180]))
+                                        self.hud_status = "ANDROID: PREV TAB [SWIPE RIGHT]"
+                                        self.last_adb_gesture_time = now
+                                        self.last_scroll_action_time = now
+                                        self.last_scroll_direction = "RIGHT"
+                                        self.is_scroll_armed = False
+                                        self.last_two_finger_x = curr_x
+                                        self.last_two_finger_y = curr_y
+                                        self.last_two_finger_time = now
 
                         # Reset anchor if stroke has expired (> 350ms) or reversed slowly without firing
-                        if stroke_duration > 0.35 or (total_dy > 0 and vy < -0.4) or (total_dy < 0 and vy > 0.4):
+                        if stroke_duration > 0.35 or (total_dy > 0 and vy < -0.4) or (total_dy < 0 and vy > 0.4) \
+                            or (total_dx > 0 and vx < -0.4) or (total_dx < 0 and vx > 0.4):
+                            self.stroke_start_x = curr_x
                             self.stroke_start_y = curr_y
                             self.stroke_start_time = now
 
+                        self.last_two_finger_x = curr_x
                         self.last_two_finger_y = curr_y
                         self.last_two_finger_time = now
             else:
                 self.is_scrolling = False
+                self.last_two_finger_x = None
+                self.last_two_finger_x = None
                 self.last_two_finger_y = None
                 self.is_scroll_armed = True
 

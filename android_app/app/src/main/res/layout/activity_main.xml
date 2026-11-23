@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:gravity="center_horizontal"
+    android:background="#0F172A">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="AirTouch"
+        android:textColor="#38BDF8"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        android:layout_marginTop="20dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Touchless Front-Camera Gesture Control"
+        android:textColor="#94A3B8"
+        android:textSize="14sp"
+        android:layout_marginBottom="32dp" />
+
+    <Button
+        android:id="@+id/btn_camera_permission"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="1. Grant Camera Permission"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/btn_overlay_permission"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="2. Enable Floating Overlay"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/btn_accessibility_permission"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="3. Enable Accessibility Service"
+        android:layout_marginBottom="24dp" />
+
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Setup: Follow steps 1, 2, and 3 above"
+        android:textColor="#FACC15"
+        android:textSize="14sp"
+        android:layout_marginBottom="20dp" />
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/camera_preview"
+        android:layout_width="200dp"
+        android:layout_height="260dp"
+        android:layout_gravity="center"
+        android:background="#1E293B" />
+
+</LinearLayout>

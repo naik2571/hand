@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">AirTouch</string>
+    <string name="accessibility_service_description">Enables touchless hand gestures (taps, reels scrolls, and navigation) via your front camera.</string>
+</resources>

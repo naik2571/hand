@@ -146,10 +146,11 @@ class VisionBridge:
         self.welcome_timer = time.time()
         self.show_welcome = True
 
-        # Performance monitoring
+        # Performance & Inference Timing
         self.fps = 0.0
         self.frame_count = 0
         self.fps_timer = time.time()
+        self.last_timestamp_ms = 0
 
     def _android_device_listener(self):
         """Background daemon polling for newly connected Android devices."""
@@ -489,7 +490,13 @@ class VisionBridge:
                 # Convert to RGB MediaPipe image and trigger asynchronous inference
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+
+                # Ensure strictly monotonically increasing timestamp for MediaPipe async pipeline
                 timestamp_ms = int(now * 1000)
+                if timestamp_ms <= self.last_timestamp_ms:
+                    timestamp_ms = self.last_timestamp_ms + 1
+                self.last_timestamp_ms = timestamp_ms
+
                 self.landmarker.detect_async(mp_image, timestamp_ms)
 
                 with self.result_lock:

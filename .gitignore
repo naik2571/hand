@@ -8,6 +8,7 @@ __pycache__/
 *.avi
 *.mov
 *.crdownload
+*.apk
 
 # Environments and IDE
 .env
@@ -18,6 +19,14 @@ ENV/
 .idea/
 .vscode/
 *.swp
+
+# Android Build artifacts & caches
+.gradle/
+android_app/.gradle/
+android_app/build/
+android_app/app/build/
+android_app/local.properties
+android_app/.idea/
 
 # OS generated
 Thumbs.db
